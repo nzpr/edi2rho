@@ -1,0 +1,13 @@
+// Submit data to a channel
+// nameIdx - index of input port
+// data - data to send (parsed IDOC as list of maps)
+let
+  @nameIdx <- "$$NAME_IDX$$";
+  @data <- "$$DATA$$"
+in {
+  new deployerId(`rho:rchain:deployerId`) in {
+    for (@(inputs, _, _, _) <<- @(*deployerId, "$$CONTRACT_ID$$")) {
+      @{inputs.nth(nameIdx - 1)}!(data)
+    }
+  }
+}

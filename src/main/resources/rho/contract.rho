@@ -1,0 +1,117 @@
+// Main contract for the demo.
+// Waits on 2 inputs for parsed IDOCs, processes the first one.
+let
+  @contractId <- "$$CONTRACT_ID$$";
+  @inputTags <- "$$INPUT_CHANNEL_TAGS$$"
+in { 
+  new
+    deployerId(`rho:rchain:deployerId`), deployId(`rho:rchain:deployId`),
+    rl(`rho:registry:lookup`), out(`rho:io:stdout`),
+    doMapping, i1, i2, o, tags, resultsTotal
+  in {
+    // publish channels (to not use registry)
+    @(*deployerId, contractId)!(((*i1, *i2), *o, *tags, *resultsTotal))
+  | tags!(inputTags)
+  | new NonNegativeNumber, Nonce, NNNCh, NonceCh in {
+      rl!(`rho:lang:nonNegativeNumber`, *NNNCh)
+    | for (@(_, NonNegativeNumber) <- NNNCh) {
+        @NonNegativeNumber!(0, *NonceCh)// nonce contract initialized with zero
+      | for (Nonce <- NonceCh) {
+          // wait for all inputs to be filled
+          for(@v1 <= i1 & @v2 <= i2) {
+            new resultCh in {
+              for (result <- resultCh) {
+                // increase nonce, put result on a tuple name with new nonce
+                new nonceUpdatedCh, newValueCh in {
+                  Nonce!("add", 1, *nonceUpdatedCh)
+                | for(_ <- nonceUpdatedCh) {
+                    Nonce!("value", *newValueCh)
+                  | for (@newNonce <- newValueCh) {
+                      @(*o, newNonce)!(*result)
+                    | resultsTotal!(newNonce)
+                    | out!("Result ${newNonce} is persisted." %% {"newNonce":newNonce})
+                    }
+                  } 
+                }   
+              | out!("Result is: ${result}" %% {"result": *result})                                
+              }
+            | doMapping!(v1.slice(1,50), *resultCh)
+            }
+          }
+        | out!("Contract ${contractId} is installed." %% {"contractId": contractId}) 
+        }
+      }     
+    }   
+    // Contract funneling number of inputs to outputs according to mapping rules
+  | contract doMapping(@idocs, @result) = {
+      new ListOpsCh in {
+        rl!(`rho:lang:listOps`, *ListOpsCh)
+      | for (@(_, *ListOps) <- ListOpsCh) {
+          new processRecord in {
+            contract processRecord(@record, @acc, recordProcessed) = {
+              match record {
+                {
+                  "E2EDK01":
+                  {
+                    "MANDT": MANDT, //(MHD, 0062)
+                    "DOCUM": DOCUM, //(MTR, NOSG)
+                    "PSGNUM": PSGNUM, //(HCT, NRIL)
+                    "BELNR": BELNR, //(CMR, CLNN)
+                    ... _
+                  }
+                } => recordProcessed!("${acc}MHD:${MANDT}MTR:${DOCUM}HCT:${PSGNUM}CMR:${BELNR}'" %% {"acc":acc,"MANDT":MANDT,"DOCUM":DOCUM,"PSGNUM":PSGNUM,"BELNR":BELNR})
+                {
+                  "TEMP_E2EDK03":
+                  {
+                    "DATUM": DATUM //(CMR, CLDT),
+                    ... _
+                  }
+                } => recordProcessed!("${acc}CMR:${DATUM}'" %% {"acc":acc, "DATUM":DATUM })
+                {
+                  "TEMP_KA1":
+                  {
+                    "TEMP_ORT02": TEMP_ORT02, //(CLO, CLO0)
+                    ... _
+                  }
+                } => recordProcessed!("${acc}CLO:${TEMP_ORT02}'" %% {"acc": acc, "TEMP_ORT02": TEMP_ORT02})
+                {
+                  "E2EDP01":
+                  {
+                    "MENGE": MENGE, //(CMD, TCMQ),
+                    "ABGRT": ABGRT, //(CMD, HSOQ)
+                    ... _
+                  }
+                } => recordProcessed!("${acc}CMD:${MENGE}CMD:${ABGRT}'" %% {"acc": acc, "MENGE": MENGE,"ABGRT":ABGRT})
+                {
+                  "Z2EDP01":
+                  {
+                    "INITIAL_SUPP": INITIAL_SUPP, //(CMD, INSQ),
+                    "RETURN_SUPP": RETURN_SUPP, //(CMD, RPSQ),
+                    "TOS_SUPPLY_QUAN": TOS_SUPPLY_QUAN, //(CMD, TSSQ)
+                    ... _
+                  }
+                } => recordProcessed!("${acc}CMD:${INITIAL_SUPP}CMD:${RETURN_SUPP}CMD:${TOS_SUPPLY_QUAN}'" %% {"acc": acc, "INITIAL_SUPP": INITIAL_SUPP,"RETURN_SUPP":RETURN_SUPP,"TOS_SUPPLY_QUAN":TOS_SUPPLY_QUAN})
+                {
+                  "TEMP_E2EDPO3":
+                  {
+                    "DATUM": DATUM, //(CMD, IDC0)
+                    ... _
+                  }
+                } => recordProcessed!("${acc}CMD:${DATUM}'" %% {"acc": acc, "DATUM": DATUM})
+                {
+                  "TEMP_E1EDP19":
+                  {
+                    "TEMP_IDTNR": TEMP_IDTNR, //(CMD, SPR), (CMD, YRNO), (CMD, ISNO)
+                    ... _
+                  }
+                } => recordProcessed!("${acc}CMD:${TEMP_IDTNR}${TEMP_IDTNR}${TEMP_IDTNR}'" %% {"acc": acc, "TEMP_IDTNR": TEMP_IDTNR})
+                _ => recordProcessed!(acc)
+              }
+            }  
+          | ListOps!("fold", idocs, "RESULT: ", *processRecord, result)
+          } 
+        }
+      }
+    }  
+  }
+}
