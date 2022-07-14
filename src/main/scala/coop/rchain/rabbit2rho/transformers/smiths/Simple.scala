@@ -1,15 +1,16 @@
 package coop.rchain.rabbit2rho.transformers.smiths
 
 import cats.effect.kernel.Concurrent
-import cats.syntax.all._
 import coop.rchain.models.Expr.ExprInstance.GString
 import coop.rchain.models.{Expr, Par}
-import coop.rchain.rabbit2rho.IdocSchemaParser.{readSchema, Element}
-import coop.rchain.rabbit2rho.IdocSchemaParser
 import coop.rchain.rabbit2rho.conf.AppConf
+import coop.rchain.rabbit2rho.gentran.GentranTools.readRecordsSchema
+import coop.rchain.rabbit2rho.gentran.IdocTools
+import coop.rchain.rabbit2rho.gentran.IdocTools.Element
 import coop.rchain.rabbit2rho.nodeclient.RhoTools.singleExpr
 import coop.rchain.rabbit2rho.transformers.{Codec, Contract, Transformer}
 import fs2.io.file.{Files, Path}
+import cats.syntax.all._
 
 import scala.io.Source
 
@@ -40,12 +41,14 @@ object Simple {
       .replace("\"$$DATA$$\"", data)
       .replace("$$CONTRACT_ID$$", contractId)
 
-  private def contract(inputSchema: Map[String, Map[String, Element]]): Contract[String, String] = {
+  private def contract(
+      inputSchema: (Map[String, String], Map[String, Map[String, Element]])
+  ): Contract[String, String] = {
     val portMapping = (inputTags zip inputNames).toMap
     val codec = new Codec[String, String] {
       override def input: Map[String, String => String] = portMapping.mapValues {
         name => (v: String) =>
-          val parsed  = IdocSchemaParser.idoc2RhoList(v, inputSchema)
+          val parsed  = IdocTools.idoc2RhoList(v, inputSchema._2, inputSchema._1)
           val data    = s"[${parsed.mkString(", ")}]"
           val nameIdx = inputNames.indexOf(name) + 1
           call(nameIdx, data)
@@ -59,7 +62,7 @@ object Simple {
 
   def apply[F[_]: Concurrent: Files](mappingRulesPath: Path) =
     for {
-      inputSchema <- readSchema[F](mappingRulesPath).compile.lastOrError
+      inputSchema <- readRecordsSchema[F](mappingRulesPath)
     } yield new Transformer[String, String] {
       override def contractName: String               = Simple.contractName
       override def contractVersion: String            = Simple.contractVersion
