@@ -64,3 +64,16 @@ object MkJobContract extends IOApp {
     } yield ExitCode.Success
   }
 }
+
+// Create contract for processing a single job
+object MkRecordContract extends IOApp {
+  override def run(args: List[String]): IO[ExitCode] = {
+    implicit val f = Files[IO]
+    val mapRules   = Path(AppConf.appConf.mappingRulesPath)
+
+    for {
+      r <- processRecordContract(mapRules)
+      _ = println(r)
+    } yield ExitCode.Success
+  }
+}

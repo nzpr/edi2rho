@@ -155,4 +155,6 @@ object GentranTools {
        |}
        | """.stripMargin
     }
+
+  def processRecordContract[F[_]: Files: Concurrent](mappingRulesPath: Path): F[String] = ???
 }
