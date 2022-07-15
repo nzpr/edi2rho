@@ -1,9 +1,10 @@
 import sbt.Keys._
-import sbt._
 
 import java.io.File
 import java.nio.file.{Files, StandardCopyOption}
-import scala.sys.process._
+import sbt._
+
+import scala.sys.process.Process
 
 object BNFC {
 
@@ -77,7 +78,7 @@ object BNFC {
   lazy val bnfcSettings = {
     inConfig(BNFCConfig)(
       Defaults.configSettings ++ Seq(
-        bnfcNamespace := "coop.rchain.grentran.ast",
+        bnfcNamespace := "coop.rchain.gtrn2rho.ast",
         bnfcGrammarDir := baseDirectory.value / "src" / "main" / "bnfc",
         bnfcOutputDir := (sourceManaged in Compile).value,
         generate := {

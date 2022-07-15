@@ -3,9 +3,13 @@ package coop.rchain.rabbit2rho.gentran
 import cats.effect.Ref
 import cats.effect.kernel.Concurrent
 import cats.syntax.all._
+import coop.rchain.gentran2rho.Compiler.createRhoFromAST
+import coop.rchain.gentran2rho.ERParser.sourceToAST
 import coop.rchain.rabbit2rho.gentran.IdocTools.Element
 import fs2.io.file.{Files, Path}
 import fs2.{text, Stream}
+
+import java.io.StringReader
 
 object GentranTools {
 
@@ -111,7 +115,10 @@ object GentranTools {
       .compile
       .lastOrError
 
-  def processJobContract[F[_]: Files: Concurrent](mappingRulesPath: Path): F[String] =
+  def processJobContract[F[_]: Files: Concurrent](
+      mappingRulesPath: Path,
+      localMap: String
+  ): F[String] =
     for {
       branching     <- readBranching[F](mappingRulesPath)
       recordsSchema <- readRecordsSchema[F](mappingRulesPath)
@@ -126,35 +133,63 @@ object GentranTools {
         .map { case (k, v) => s""""$k": [${v.map(x => s""""$x"""").toList.mkString(", ")}]""" }
         .mkString(", ")}}"""
 
-      s"""
-       |new claim3n in {
-       |  // return channel, map {"LOCAL": <list of keys in local map>}, contract to process a single record
-       |  contract claim3n(ret, localsMap, processRecord) = {
-       |    let 
+      s"""  // return channel, map {"LOCAL": <list of keys in local map>}, contract to process a single record
+       |  contract claim3n(ret, processRecord) = {
+       |    let
        |      // these two values are parsed from gentran mapping rules file from branching and input records section
        |      branching <- $branchesRho;
-       |      records <- $recordsMapRho;
-       |      initState <- {} // TODO make AMap available in rholang AMap(branching, records.union(localsMap))
+       |      records <- $localMap.union($recordsMapRho);
+       |      initState <- {} // TODO make AMap available in rholang AMap(branching, records)
        |    in {
        |      new this, stateCh in {
        |        ret!(*this) // spit out the contract
        |      | stateCh!(*initState) // init state
-       |      | contract this(ret, @"getResult") = { 
+       |      | contract this(ret, @"getResult") = {
        |          for (state <<- stateCh) { ret!(*state) }
        |        }
-       |      | contract this(record, @"processRecord") = { 
+       |      | contract this(record, @"processRecord") = {
        |          for (state <- stateCh) {
        |            for (newState <- processRecord!?(*state, *record)) {
        |              stateCh!(*newState)
        |            }
        |          }
        |        }
-       |      }   
-       |    } 
-       |  }  
-       |}
+       |      }
+       |    }
+       |  }
        | """.stripMargin
     }
 
-  def processRecordContract[F[_]: Files: Concurrent](mappingRulesPath: Path): F[String] = ???
+  def extendedRules[F[_]: Files: Concurrent](
+      mappingRulesPath: Path
+  ): F[(String, String, String)] =
+    Files[F]
+      .readAll(mappingRulesPath)
+      .through(text.utf8.decode)
+      .through(text.lines)
+      .filter(s => !s.isBlank)
+      .dropWhile(s => !s.contains("Extended Rules"))
+      .dropThrough(s => !s.contains("On Begin"))
+      .takeWhile(s => !s.contains("CLADET"))
+      .compile
+      .toList
+      .map(_.mkString("\n"))
+      .map { rules =>
+        val reader = new StringReader(rules ++ "\n")
+        val ast    = sourceToAST(reader)
+        createRhoFromAST(ast)
+      }
+
+  def contract[F[_]: Files: Concurrent](
+      mappingRulesPath: Path
+  ): F[String] =
+    for {
+      er                           <- extendedRules(mappingRulesPath)
+      (localMap, _, processRecord) = er
+      topContract                  <- processJobContract(mappingRulesPath, localMap)
+    } yield s"""
+         #new claim3n, processRecord in {
+         #$topContract
+         #| $processRecord
+         #}""".stripMargin('#')
 }

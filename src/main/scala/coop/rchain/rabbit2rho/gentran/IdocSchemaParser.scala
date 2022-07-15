@@ -59,7 +59,7 @@ object MkJobContract extends IOApp {
     val mapRules   = Path(AppConf.appConf.mappingRulesPath)
 
     for {
-      r <- processJobContract(mapRules)
+      r <- processJobContract(mapRules, "{}")
       _ = println(r)
     } yield ExitCode.Success
   }
@@ -72,7 +72,22 @@ object MkRecordContract extends IOApp {
     val mapRules   = Path(AppConf.appConf.mappingRulesPath)
 
     for {
-      r <- processRecordContract(mapRules)
+      r <- extendedRules(mapRules)
+      _ = println((r._1))
+      _ = println((r._2))
+      _ = println((r._3))
+    } yield ExitCode.Success
+  }
+}
+
+// Create contract for processing a single job
+object MkFullContract extends IOApp {
+  override def run(args: List[String]): IO[ExitCode] = {
+    implicit val f = Files[IO]
+    val mapRules   = Path(AppConf.appConf.mappingRulesPath)
+
+    for {
+      r <- contract(mapRules)
       _ = println(r)
     } yield ExitCode.Success
   }

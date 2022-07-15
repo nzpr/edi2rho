@@ -45,7 +45,7 @@ lazy val commonSettings = projectSettings
 
 lazy val edi2rho = (project in file("."))
   .settings(commonSettings: _*)
-//  .settings(bnfcSettings: _*)
+  .settings(bnfcSettings: _*)
   .enablePlugins(Fs2Grpc)
   .settings(
     name := "rabbit2rho",

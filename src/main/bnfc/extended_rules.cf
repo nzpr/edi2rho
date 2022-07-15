@@ -1,0 +1,140 @@
+-- The program consists of three sections:
+-- I) Declarations section II) Initializations section III) Statement blocks
+Program. ProgramType ::= DeclarationList StmList BlockList ;
+
+-----------------------------------------------------------------------------------------
+-- I) Declarations section (sequence of declarations)
+Declarations. DeclarationList  ::= [Declaration] ;
+terminator Declaration ";" ;
+
+DeclIntegerArr.  Declaration ::= IntId "[" IntegerLiteral "]"  IdentLiteral;
+DeclInteger.     Declaration ::= IntId IdentLiteral;
+IntIdSmall.      IntId ::= "integer" ;
+IntIdCapital.    IntId ::= "INTEGER" ;
+
+DeclRealArr.   Declaration ::= RealId "[" IntegerLiteral "]"  IdentLiteral;
+DeclReal.      Declaration ::= RealId IdentLiteral;
+RealIdSmall.   RealId ::= "real" ;
+RealIdCapital. RealId ::= "REAL" ;
+
+DeclString.      Declaration ::= StringId "[" IntegerLiteral "]" IdentLiteral;
+StringIdSmall.   StringId ::= "string" ;
+StringIdCapital. StringId ::= "STRING" ;
+
+DeclDateTimeArr.   Declaration ::= DateTimeId "[" IntegerLiteral "]"  IdentLiteral;
+DeclDateTime.      Declaration ::= DateTimeId IdentLiteral;
+DateTimeIdSmall.   DateTimeId  ::= "datetime" ;
+DateTimeIdCapital. DateTimeId  ::= "DATETIME" ;
+
+DeclObject.        Declaration ::= ObjectId IdentLiteral;
+ObjectIdSmall.     ObjectId    ::= "object" ;
+ObjectIdCapital.   ObjectId    ::= "OBJECT" ;
+
+-----------------------------------------------------------------------------------------
+-- II) Initializations section (sequence of statements which init local variables).
+-- See description of statements below.
+
+-----------------------------------------------------------------------------------------
+-- III) Statement blocks (sequence of blocks).
+Blocks. BlockList ::= [Block] ;
+separator Block "" ;
+
+-- Each block contain header and sequence of statements.
+BlockImpl. Block ::= Header StmList ;
+
+-- Header contains information in the format: "GROUP.FIELD":
+HeaderImpl. Header ::= HeaderLiteral;
+
+-----------------------------------------------------------------------------------------
+-- Statements section (sequence of statements)
+Statements. StmList ::= [Statement] ;
+separator Statement "" ;
+
+-- Statements can be: 1) Conditions (if/else, do/while) or 2) Assignments
+StmConditionIf.    Statement ::= ConditionIfType ;
+    -- (Work in progress: while) ;
+StmAssignment.  Statement ::= AssignmentType ;
+
+-------------------------
+-- Conditions
+-- 1) After conditions semicolon not included. Other statements can be nested in conditions.
+-- ConditionIf declaration
+ConditionIf. ConditionIfType ::= IfExp Body [ElseThen] Else  ;
+IfExpSmall.   IfExp ::= "if" Expr "then" ;
+IfExpCapital. IfExp ::= "IF" Expr "THEN" ;
+ElseThenSmall.   ElseThen ::= "else" Expr "then" Body ;
+ElseThenCapital. ElseThen ::= "ELSE" Expr "THEN" Body ;
+separator ElseThen "" ;
+ElseSmall.   Else ::= "else" Body ;
+ElseCapital. Else ::= "ELSE" Body ;
+ElseNon    . Else ::= "" ;
+BodySmall.   Body ::= "BEGIN" StmList "END" ;
+BodyCapital. Body ::= "begin" StmList "end" ;
+    -- (Work in progress: Body with one statement without BEGIN/END) ;
+
+-------------------------
+-- Assignment
+-- 2) After assignments must be a semicolon. Other statements can not be nested in assignments.
+-- Assignment can be: 1) Assignment or 2) Method (There are methods that have an assignment)
+Assignment.  AssignmentType  ::= Variable "=" Expr ";" ;
+MethodCall.  AssignmentType  ::= MethodType ";" ;
+
+-- Any conversions are done in expressions.
+_. Expr  ::= Expr1 ;
+_. Expr1 ::= Expr2 ;
+_. Expr2 ::= Expr3 ;
+_. Expr3 ::= Expr4 ;
+_. Expr4 ::= Expr5 ;
+_. Expr5 ::= Expr6 ;
+_. Expr6 ::= Expr7 ;
+_. Expr7 ::= Expr8 ;
+_. Expr8 ::= "(" Expr ")" ;
+
+ExprOr.             Expr   ::= Expr  "|"  Expr1 ;
+ExprAnd.            Expr1  ::= Expr1 "&"  Expr2 ;
+ExprEqual.          Expr2  ::= Expr2 "="  Expr3 ;
+ExprNotEqual.       Expr2  ::= Expr2 "!=" Expr3 ;
+ExprLt.             Expr3  ::= Expr3 "<"  Expr4 ;
+ExprLte.            Expr3  ::= Expr3 "<=" Expr4 ;
+ExprGt.             Expr3  ::= Expr3 ">"  Expr4 ;
+ExprGte.            Expr3  ::= Expr3 ">=" Expr4 ;
+ExprAddition.       Expr4  ::= Expr4 "+"  Expr5 ;
+ExprSubtraction.    Expr4  ::= Expr4 "-"  Expr5 ;
+ExprMultiplication. Expr5  ::= Expr5 "*"  Expr6 ;
+ExprDivision.       Expr5  ::= Expr5 "/"  Expr6 ;
+ExprNot.            Expr6  ::= "!" Expr6 ;
+ExprMethod.         Expr7  ::= MethodType ;
+ExprSymbol.         Expr8  ::= Symbol ;
+
+Method. MethodType  ::= IdentLiteral "(" [Expr] ")" ;
+separator Expr "," ;
+
+-------------------------
+-- Symbols
+-- Any expressions operate with symbols. Symbols can be 1) Variables or 2) Constant
+SVariable. Symbol ::= Variable ;
+SConstant. Symbol ::= Constant ;
+
+-- Any expressions operate with symbols. Symbols can be 1) Variables or 2) Constant
+-- 1) Variable declaration
+VarFieldInGroup. Variable ::= "$" IdentLiteral "." "#" IdentLiteral ;
+VarField.        Variable ::= "#" IdentLiteral ;
+VarLocal.        Variable ::=     IdentLiteral ;
+    -- (Work in progress: Multi-group field, accumulator, array)
+
+-- 2) Constant declaration
+ConstReal.        Constant ::= DoubleLiteral ;
+ConstInteger.     Constant ::= IntegerLiteral ;
+ConstString.      Constant ::= StringLiteral ;
+
+-----------------------------------------------------------------------------------------
+-- Tokens
+token DoubleLiteral  digit+ '.' digit+ ('e' '-'? digit+)? ;
+token IntegerLiteral digit+ ;
+token StringLiteral  '"' ((char - ["\"\\"]) | ('\\' ["\"\\tnrf"]))* '"' ;
+token HeaderLiteral   ( letter | ':' | '_') (letter | digit | ':' | '_' )* '.' ( letter | ':' | '_') (letter | digit | ':' | '_' )*;
+token IdentLiteral   ( letter | ':' | '_') (letter | digit | ':' | '_' )* ;
+
+-- Comments:
+comment "//" ;
+comment "/*" "*/" ;
