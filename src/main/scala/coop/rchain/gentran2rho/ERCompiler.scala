@@ -44,7 +44,7 @@ object Compiler {
 
   def createInit(stmList: StmList): String = {
     val strBody = procStatements(stmList, 1, 0)
-    s"""contract init(ret0, s) = {
+    s"""contract init(ret0) = {
          #$strBody
          #}""".stripMargin('#')
   }
@@ -52,20 +52,28 @@ object Compiler {
   def createProcessRecordContract(blockList: BlockList): String = {
     def id(level: Int)          = ident * level
     val strProcessFieldContract = createProcessFieldContract(blockList, 2)
-    s"""${id(0)}contract processRecord(return, @state, @(recKey, recValues)) = {
-       #${id(1)}new processField, loop in {    
+    s"""${id(0)}contract processRecord(return, s, @(recKey, recValues)) = {
+       #${id(1)}new processField, saveRecordDataLoop, processFieldLoop in {    
        #$strProcessFieldContract |
-       #${id(2)}contract loop(@keys, @s) = {
+       #${id(2)}contract processFieldLoop(@keys) = {
        #${id(3)}match keys {
-       #${id(4)}Set(head ...tail) => {
-       #${id(5)}new newState in {
-       #${id(6)}for (newState <- processField!?(s, head)) { loop!(tail, *newState) }
-       #${id(5)}}
+       #${id(4)}Set(head... tail) => {
+       #${id(5)}for(_ <- processField!?(head)) { processFieldLoop!(tail) }
        #${id(4)}}
-       #${id(4)}_ => { return!(s) }
+       #${id(4)}_ => { return!(true) }
        #${id(3)}}
        #${id(2)}} |
-       #${id(2)}loop!(recValues.keys(), state)
+       #${id(2)}contract saveRecordDataLoop(@KVs) = {
+       #${id(3)}match KVs {
+       #${id(4)}[head... tail] => {
+       #${id(5)}for(_ <- s!?("update", recKey, head.nth(0), head.nth(1))) {
+       #${id(6)}saveRecordDataLoop!(tail)
+       #${id(5)}}
+       #${id(4)}}
+       #${id(4)}_ => { processFieldLoop!(recValues.keys()) }
+       #${id(3)}}
+       #${id(2)}} |
+       #${id(2)}saveRecordDataLoop!(recValues.toList())
        #${id(1)}}
        #${id(0)}}""".stripMargin('#')
   }
@@ -73,7 +81,7 @@ object Compiler {
   def createProcessFieldContract(blockList: BlockList, identLevel: Int): String = {
     def id(addLevel: Int) = ident * (identLevel + addLevel)
     def createCase(name: String): String =
-      s"""${id(3)}"$name" => { for(newS <- $name!?(*s)) { ret!(*newS) } }"""
+      s"""${id(3)}"$name" => { for(@res <- $name!?()) { ret!(res) } }"""
 
     val blocks = blockList match {
       case x: Blocks => x.listblock_.toList
@@ -84,12 +92,12 @@ object Compiler {
     val strNewNames     = names.mkString(", ")
     val strCases        = names.map(createCase).mkString("\n")
 
-    s"""${id(0)}contract processField(ret, s, fieldName) = {
+    s"""${id(0)}contract processField(ret, @fieldName) = {
         #${id(1)}new $strNewNames in {
         #$strBlockSection |
-        #${id(2)}match *fieldName {
+        #${id(2)}match fieldName {
         #$strCases
-        #${id(3)}_ => ret!(*s)
+        #${id(3)}_ => ret!(true)
         #${id(2)}}
         #${id(1)}}
         #${id(0)}}""".stripMargin('#')
@@ -110,7 +118,7 @@ object Compiler {
         // TODO: Add groupName in block name in the future
         val _  = groupName
         def id = ident * identLevel
-        s"""${id}contract $fieldName(ret0, s, recName) = {
+        s"""${id}contract $fieldName(ret0) = {
              #$strBody
              #$id}""".stripMargin('#')
     }
@@ -133,25 +141,42 @@ object Compiler {
 
   def recProcStatement(stms: List[Statement], identLevel: Int, nestedLevel: Int): String = {
 
-    def id     = ident * identLevel
-    def idPlus = ident * (identLevel + 1)
+    def id(addLevel: Int = 0) = ident * (identLevel + addLevel)
 
-    def procAssignment(strVar: String, strExpr: String): String = {
-      val strBody = recProcStatement(stms.tail, identLevel + 1, nestedLevel)
-      s"""${id}let s <- *s.set($strVar, $strExpr) in {
-           #$strBody
-           #$id}""".stripMargin('#')
+    def createGroupAndFieldName(simpleVar: simpleVariable): (String, String) =
+      simpleVar match {
+        case simpleVarFieldInGroup(groupName, fieldName) =>
+          (s""""$groupName"""", s""""$fieldName"""")
+        case simpleVarField(fieldName) => ("recKey", s""""$fieldName"""")
+        case simpleVarLocal(fieldName) => (""""LOCAL"""", s""""$fieldName"""")
+      }
+
+    def createVals(vars: Set[simpleVariable]): String = {
+      val strs: List[String] = vars.toList.map { simpleVar =>
+        val strName        = createValName(simpleVar)
+        val (group, field) = createGroupAndFieldName(simpleVar)
+        s"""@$strName <- s!?("get", $group, $field)"""
+      }
+      s"for(${strs.mkString("; ")}) {"
     }
 
-    def procIfExpr(ifExp: IfExp): String = {
+    def procAssignment(variable: Variable, strExpr: String, addIdent: Int): String = {
+      val (group, field) = createGroupAndFieldName(createSimpleVar(variable))
+      val strBody        = recProcStatement(stms.tail, identLevel + addIdent + 1, nestedLevel)
+      s"""${id(addIdent)}for(_ <- s!?("update", $group, $field, $strExpr)) {
+         #$strBody
+         #${id(addIdent)}}""".stripMargin('#')
+    }
+
+    def procIfExpr(ifExp: IfExp): (String, Set[simpleVariable]) = {
       val expr = ifExp match {
         case x: IfExpCapital => x.expr_
         case x: IfExpSmall   => x.expr_
       }
-      recProcExpr(expr)
+      recProcExpr(expr, Set())
     }
 
-    def procBody(body: Body): String = {
+    def procBody(body: Body, addIdent: Int): String = {
       val stmList = body match {
         case x: BodyCapital => x.stmlist_
         case x: BodySmall   => x.stmlist_
@@ -159,65 +184,82 @@ object Compiler {
       val statements = stmList match {
         case x: Statements => x.liststatement_.toList
       }
-      recProcStatement(statements, identLevel + 2, nestedLevel + 1)
+      recProcStatement(statements, identLevel + 2 + addIdent, nestedLevel + 1)
     }
 
-    def procElse(els: Else): String =
+    def procElse(els: Else, addIdent: Int): String =
       els match {
-        case x: ElseCapital => procBody(x.body_)
-        case x: ElseSmall   => procBody(x.body_)
-        case _: ElseNon     => recProcStatement(List(), identLevel + 2, nestedLevel + 1)
+        case x: ElseCapital => procBody(x.body_, addIdent)
+        case x: ElseSmall   => procBody(x.body_, addIdent)
+        case _: ElseNon     => recProcStatement(List(), identLevel + 2 + addIdent, nestedLevel + 1)
       }
 
-    def procStm(stm: Statement) = stm match {
-      case stmIf: StmConditionIf =>
-        stmIf.conditioniftype_ match {
-          case condIf: ConditionIf =>
-            val strIfExpr   = procIfExpr(condIf.ifexp_)
-            val strIfBody   = procBody(condIf.body_)
-            val strElseBody = procElse(condIf.else_)
-            val strBody     = recProcStatement(stms.tail, identLevel + 2, nestedLevel)
-            assert(
-              condIf.listelsethen_.toList.isEmpty,
-              s"Extended Rules Error: condition ELSE THEN doesn't supported"
-            )
-            s"""${id}new ret${nestedLevel + 1} in {
-                 #${idPlus}if$strIfExpr {
-                 #$strIfBody
-                 #$idPlus}
-                 #${idPlus}else {
-                 #$strElseBody
-                 #$idPlus} |
-                 #${idPlus}for(s<-ret${nestedLevel + 1}) {
-                 #$strBody
-                 #$idPlus}
-                 #$id}""".stripMargin('#')
-          case _ =>
-            assert(
-              assertion = false,
-              s"Extended Rules Error: condition ${stmIf.conditioniftype_} doesn't supported"
-            )
-            ???
-        }
-      case assignment: StmAssignment =>
-        val (strVar, strExpr) = assignment.assignmenttype_ match {
-          case method: MethodCall => procMethodAssignment(method.methodtype_)
-          case assignment: Assignment =>
-            val strVar  = procVar(assignment.variable_)
-            val strExpr = recProcExpr(assignment.expr_)
-            (strVar, strExpr)
-        }
-        procAssignment(strVar, strExpr)
+    def procStm(stm: Statement) = {
+      val (strStm, varList) = stm match {
+        case stmIf: StmConditionIf =>
+          stmIf.conditioniftype_ match {
+            case condIf: ConditionIf =>
+              val (strIfExpr, vars) = procIfExpr(condIf.ifexp_)
+              val addIdent          = if (vars.nonEmpty) 1 else 0
+              val strIfBody         = procBody(condIf.body_, addIdent)
+              val strElseBody       = procElse(condIf.else_, addIdent)
+              val strBody           = recProcStatement(stms.tail, identLevel + addIdent + 2, nestedLevel)
+              assert(
+                condIf.listelsethen_.toList.isEmpty,
+                s"Extended Rules Error: condition ELSE THEN doesn't supported"
+              )
+              val str =
+                s"""${id(addIdent)}new ret${nestedLevel + 1} in {
+                   #${id(addIdent + 1)}if$strIfExpr {
+                   #$strIfBody
+                   #${id(addIdent + 1)}}
+                   #${id(addIdent + 1)}else {
+                   #$strElseBody
+                   #${id(addIdent + 1)}} |
+                   #${id(addIdent + 1)}for(_<-ret${nestedLevel + 1}) {
+                   #$strBody
+                   #${id(addIdent + 1)}}
+                   #${id(addIdent)}}""".stripMargin('#')
+              (str, vars)
+            case _ =>
+              assert(
+                assertion = false,
+                s"Extended Rules Error: condition ${stmIf.conditioniftype_} doesn't supported"
+              )
+              ???
+          }
+        case assignment: StmAssignment =>
+          val (variable, strExpr, vars) = assignment.assignmenttype_ match {
+            case method: MethodCall => procMethodAssignment(method.methodtype_)
+            case assignment: Assignment =>
+              val (strExpr, vars) = recProcExpr(assignment.expr_, Set())
+              (assignment.variable_, strExpr, vars)
+          }
+          val addIdent = if (vars.nonEmpty) 1 else 0
+          val str      = procAssignment(variable, strExpr, addIdent)
+          (str, vars)
+      }
+      if (varList.nonEmpty)
+        s"""${id()}${createVals(varList)}
+           #$strStm
+           #${id()}}""".stripMargin('#')
+      else strStm
     }
 
-    def ret = s"${id}ret$nestedLevel!(*s)"
+    def ret = s"${id()}ret$nestedLevel!(true)"
 
     stms.headOption.map(procStm).getOrElse(ret)
   }
 
-// Convert a method to assignment in format: variable = expression.
-// Return (variable, expression).
-  def procMethodAssignment(methodType: MethodType): (String, String) =
+  sealed trait simpleVariable
+  final case class simpleVarFieldInGroup(groupName: String, fieldName: String)
+      extends simpleVariable
+  final case class simpleVarField(fieldName: String) extends simpleVariable
+  final case class simpleVarLocal(fieldName: String) extends simpleVariable
+
+  // Convert a method to assignment in format: variable = expression.
+  // Return (variable, strExpression, set of all variables in method expressions).
+  def procMethodAssignment(methodType: MethodType): (Variable, String, Set[simpleVariable]) =
     methodType match {
       case method: Method =>
         val params = method.listexpr_.toList
@@ -230,17 +272,32 @@ object Compiler {
             params.length == number,
             s"Extended Rules Error: method ${method.identliteral_} should contain $number parameters"
           )
+        def getVariable(expr: Expr): Option[Variable] =
+          expr match {
+            case s: ExprSymbol =>
+              s.symbol_ match {
+                case v: SVariable => Some(v.variable_)
+                case _            => None
+              }
+            case _ => None
+          }
         method.identliteral_ match {
           case "strdate" | "STRDATE" =>
             // strdate(datetime,"format",string);
             // The strdate function converts a datetime type into a string using a format that you specify.
             checkNumParams(3)
-            val variable = recProcExpr(params(2))
-            val dateExpr = recProcExpr(params.head)
-            val format   = recProcExpr(params(1))
+            val variable: Variable = getVariable(params(2)).getOrElse {
+              assert(
+                assertion = false,
+                s"""Extended Rules Error: there isn't variable in method STRDATE"""
+              )
+              ???
+            }
+            val (dateExpr, vars1) = recProcExpr(params.head, Set())
+            val (format, vars2)   = recProcExpr(params(1), vars1)
             format match {
               case """"%y%m%d"""" =>
-                (variable, dateExpr)
+                (variable, dateExpr, vars2)
               case _ =>
                 assert(
                   assertion = false,
@@ -260,21 +317,34 @@ object Compiler {
 
   def procIdent(identLiteral: String): String = identLiteral.replace(":", "_colon_")
 
-  def procVar(variable: Variable): String =
-    variable match {
-      case x: VarFieldInGroup =>
-        val groupName = procIdent(x.identliteral_1)
-        val fieldName = procIdent(x.identliteral_2)
-        s""""$groupName", "$fieldName""""
-      case x: VarField =>
-        val fieldName = procIdent(x.identliteral_)
-        s"""*recName, "$fieldName""""
-      case x: VarLocal =>
-        val fieldName = procIdent(x.identliteral_)
-        s""""local", "$fieldName""""
+  def createValName(simpleVar: simpleVariable): String =
+    simpleVar match {
+      case x: simpleVarFieldInGroup =>
+        s"val_${x.groupName}_${x.fieldName}"
+      case x: simpleVarField =>
+        s"val_current_${x.fieldName}"
+      case x: simpleVarLocal =>
+        s"val_local_${x.fieldName}"
     }
 
-  def recProcExpr(expr: Expr): String = {
+  def createSimpleVar(variable: Variable): simpleVariable =
+    variable match {
+      case x: VarFieldInGroup =>
+        simpleVarFieldInGroup(procIdent(x.identliteral_1), procIdent(x.identliteral_2))
+      case x: VarField =>
+        simpleVarField(procIdent(x.identliteral_))
+      case x: VarLocal =>
+        simpleVarLocal(procIdent(x.identliteral_))
+    }
+
+  /**
+    *
+    * @param expr
+    * @return (term, Set[(prefix, fieldName)]), where
+    *         term - string term of expression;
+    *         Set[Variable]) - list of all variables which used in expression.
+    */
+  def recProcExpr(expr: Expr, vars: Set[simpleVariable]): (String, Set[simpleVariable]) = {
     def procConstant(const: Constant): String =
       const match {
         case x: ConstString  => x.stringliteral_
@@ -284,16 +354,28 @@ object Compiler {
           ???
       }
 
-    def procSymbol(symbol: Symbol): String =
+    def procVar(variable: Variable): (String, simpleVariable) = {
+      val simpleVar = createSimpleVar(variable)
+      (createValName(simpleVar), simpleVar)
+    }
+
+    def procSymbol(symbol: Symbol): (String, Option[simpleVariable]) =
       symbol match {
-        case x: SVariable => s"*s.get(${procVar(x.variable_)})"
-        case x: SConstant => procConstant(x.constant_)
+        case x: SVariable =>
+          val (term, simpleVar) = procVar(x.variable_)
+          (term, Some(simpleVar))
+        case x: SConstant => (procConstant(x.constant_), None)
       }
 
-    def procMethodExpr(methodType: MethodType): String =
+    def procMethodExpr(methodType: MethodType): (String, Set[simpleVariable]) =
       methodType match {
         case method: Method =>
-          val exprs = method.listexpr_.toList.map(recProcExpr)
+          val listExpr = method.listexpr_.toList
+          val (exprs, newVars) = listExpr.foldLeft((List[String](), vars)) { (acc, expr) =>
+            val (accExpr, accV) = acc
+            val (str, newV)     = recProcExpr(expr, accV)
+            (accExpr :+ str, newV)
+          }
           assert(
             exprs.nonEmpty,
             s"Extended Rules Error: no parameters in the method ${method.identliteral_}"
@@ -309,17 +391,17 @@ object Compiler {
               checkNumParams(1)
               val sliceEnd   = s"($target.length() - 1)"
               val sliceStart = s"($sliceEnd - ${params.head})"
-              s"$target.slice($sliceStart, $sliceEnd)"
+              (s"$target.slice($sliceStart, $sliceEnd)", newVars)
             case "LEFT" | "left" =>
               checkNumParams(1)
               val sliceStart = s"0"
               val sliceEnd   = s"(${params.head} - 1)"
-              s"$target.slice($sliceStart, $sliceEnd)"
+              (s"$target.slice($sliceStart, $sliceEnd)", newVars)
             case "MID" | "mid" =>
               checkNumParams(2)
               val sliceStart = s"${params.head}"
               val sliceEnd   = s"(${params.head} + ${params(1)})"
-              s"$target.slice($sliceStart, $sliceEnd)"
+              (s"$target.slice($sliceStart, $sliceEnd)", newVars)
             case _ =>
               assert(
                 assertion = false,
@@ -329,22 +411,32 @@ object Compiler {
           }
       }
 
+    def proc2Exprs(expr1: Expr, expr2: Expr, bundle: String): (String, Set[simpleVariable]) = {
+      val (str1, newVars1) = recProcExpr(expr1, vars)
+      val (str2, newVars2) = recProcExpr(expr2, newVars1)
+      (s"($str1 $bundle $str2)", newVars2)
+    }
+
     expr match {
-      case x: ExprOr             => s"(${recProcExpr(x.expr_1)} or ${recProcExpr(x.expr_2)})"
-      case x: ExprAnd            => s"(${recProcExpr(x.expr_1)} and ${recProcExpr(x.expr_2)})"
-      case x: ExprEqual          => s"(${recProcExpr(x.expr_1)} == ${recProcExpr(x.expr_2)})"
-      case x: ExprNotEqual       => s"(${recProcExpr(x.expr_1)} != ${recProcExpr(x.expr_2)})"
-      case x: ExprLt             => s"(${recProcExpr(x.expr_1)} < ${recProcExpr(x.expr_2)})"
-      case x: ExprLte            => s"(${recProcExpr(x.expr_1)} <= ${recProcExpr(x.expr_2)})"
-      case x: ExprGt             => s"(${recProcExpr(x.expr_1)} > ${recProcExpr(x.expr_2)})"
-      case x: ExprGte            => s"(${recProcExpr(x.expr_1)} >= ${recProcExpr(x.expr_2)})"
-      case x: ExprAddition       => s"(${recProcExpr(x.expr_1)} + ${recProcExpr(x.expr_2)})"
-      case x: ExprSubtraction    => s"(${recProcExpr(x.expr_1)} - ${recProcExpr(x.expr_2)})"
-      case x: ExprMultiplication => s"(${recProcExpr(x.expr_1)} * ${recProcExpr(x.expr_2)})"
-      case x: ExprDivision       => s"(${recProcExpr(x.expr_1)} / ${recProcExpr(x.expr_2)})"
-      case x: ExprNot            => s"(not ${recProcExpr(x.expr_)})"
-      case x: ExprMethod         => procMethodExpr(x.methodtype_)
-      case x: ExprSymbol         => procSymbol(x.symbol_)
+      case x: ExprOr             => proc2Exprs(x.expr_1, x.expr_2, "or")
+      case x: ExprAnd            => proc2Exprs(x.expr_1, x.expr_2, "and")
+      case x: ExprEqual          => proc2Exprs(x.expr_1, x.expr_2, "==")
+      case x: ExprNotEqual       => proc2Exprs(x.expr_1, x.expr_2, "!=")
+      case x: ExprLt             => proc2Exprs(x.expr_1, x.expr_2, "<")
+      case x: ExprLte            => proc2Exprs(x.expr_1, x.expr_2, "<=")
+      case x: ExprGt             => proc2Exprs(x.expr_1, x.expr_2, ">")
+      case x: ExprGte            => proc2Exprs(x.expr_1, x.expr_2, ">=")
+      case x: ExprAddition       => proc2Exprs(x.expr_1, x.expr_2, "+")
+      case x: ExprSubtraction    => proc2Exprs(x.expr_1, x.expr_2, "-")
+      case x: ExprMultiplication => proc2Exprs(x.expr_1, x.expr_2, "*")
+      case x: ExprDivision       => proc2Exprs(x.expr_1, x.expr_2, "/")
+      case x: ExprNot =>
+        val (str, newVars) = recProcExpr(x.expr_, vars)
+        (s"(not $str)", newVars)
+      case x: ExprMethod => procMethodExpr(x.methodtype_)
+      case x: ExprSymbol =>
+        val (str, vOpt) = procSymbol(x.symbol_)
+        (str, vOpt.map(vars + _).getOrElse(vars))
       case _ =>
         assert(assertion = false, s"Extended Rules Error: expression $expr doesn't supported")
         ???
