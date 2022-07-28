@@ -9,50 +9,68 @@ object Compiler {
   def createRhoFromAST(term: ProgramType): (String, String, String) =
     term match {
       case prog: Program =>
-        val decl   = createDecls(prog.declarationlist_)
-        val init   = createInit(prog.stmlist_)
-        val blocks = createProcessRecordContract(prog.blocklist_)
-        (decl, init, blocks)
+        val localDecl = createDecls(prog.declarationlist_)
+        val localInit = createInit(prog.stmlist_)
+        val blocks    = createProcessRecordContract(prog.blocklist_)
+        (localDecl, localInit, blocks)
     }
 
   val ident = "  "
 
   def createDecls(declList: DeclarationList): String = {
+    def procDecl(decl: Declaration): String =
+      decl match {
+        case x: DeclString   => procIdent(x.identliteral_)
+        case x: DeclInteger  => procIdent(x.identliteral_)
+        case x: DeclDateTime => procIdent(x.identliteral_)
+        case _ =>
+          assert(
+            assertion = false,
+            s"Extended Rules Error: declaration $decl doesn't supported"
+          )
+          ""
+      }
     val decls = declList match {
       case x: Declarations => x.listdeclaration_.toList
     }
-    val strDecls = decls.map(x => procDecl(x))
-    val res      = strDecls.mkString(", ")
-    s"""{"LOCAL": [$res]}"""
-  }
-
-  // TODO: Add type of vars
-  def procDecl(decl: Declaration): String = {
-    val str = decl match {
-      case x: DeclString   => procIdent(x.identliteral_)
-      case x: DeclInteger  => procIdent(x.identliteral_)
-      case x: DeclDateTime => procIdent(x.identliteral_)
-      case _ =>
-        assert(
-          assertion = false,
-          s"Extended Rules Error: declaration $decl doesn't supported"
-        )
-        ""
-    }
-    s""""$str""""
+    val strDecls     = decls.map(x => procDecl(x))
+    val strNewDecl   = strDecls.mkString(", ")
+    val strStateDecl = strDecls.map(x => s""""$x":*$x""").mkString(", ")
+    s"""new LMap, state in {
+       #  contract LMap(return, @"decl") = {
+       #    new $strNewDecl in {
+       #      state!({$strStateDecl}) |
+       #      for(_ <<- state) {return!(true)}
+       #    }
+       #  } |
+       #  contract LMap(return, @"get", @field) = {
+       #    for(@s <<- state) {
+       #      let chan <- s.get(field) in {
+       #        for(x <<- chan) {return!(*x)}
+       #      }
+       #    }    
+       #  } |
+       #  contract LMap(return, @"update", @field, @value) = {
+       #    for(@s <<- state) {
+       #      let chan <- s.get(field) in {
+       #        for(_ <- chan) {chan!(value) | for(_ <<- chan) {return!(true)}}
+       #      }
+       #    }
+       #  }
+       #}""".stripMargin('#')
   }
 
   def createInit(stmList: StmList): String = {
     val strBody = procStatements(stmList, 1, 0)
-    s"""contract init(ret0) = {
-         #$strBody
-         #}""".stripMargin('#')
+    s"""contract localInit(ret0, l) = {
+       #$strBody
+       #}""".stripMargin('#')
   }
 
   def createProcessRecordContract(blockList: BlockList): String = {
     def id(level: Int)          = ident * level
     val strProcessFieldContract = createProcessFieldContract(blockList, 2)
-    s"""${id(0)}contract processRecord(return, s, @(recKey, recValues)) = {
+    s"""${id(0)}contract processRecord(return, s, l, @(recKey, recValues)) = {
        #${id(1)}new processField, saveRecordDataLoop, processFieldLoop in {    
        #$strProcessFieldContract |
        #${id(2)}contract processFieldLoop(@keys) = {
@@ -143,27 +161,35 @@ object Compiler {
 
     def id(addLevel: Int = 0) = ident * (identLevel + addLevel)
 
-    def createGroupAndFieldName(simpleVar: simpleVariable): (String, String) =
+    def createGetConsume(simpleVar: simpleVariable): String =
       simpleVar match {
         case simpleVarFieldInGroup(groupName, fieldName) =>
-          (s""""$groupName"""", s""""$fieldName"""")
-        case simpleVarField(fieldName) => ("recKey", s""""$fieldName"""")
-        case simpleVarLocal(fieldName) => (""""LOCAL"""", s""""$fieldName"""")
+          s"""s!?("get", "$groupName", "$fieldName")"""
+        case simpleVarField(fieldName) => s"""s!?("get", recKey, "$fieldName")"""
+        case simpleVarLocal(fieldName) => s"""l!?("get", "$fieldName")"""
       }
 
-    def createVals(vars: Set[simpleVariable]): String = {
-      val strs: List[String] = vars.toList.map { simpleVar =>
-        val strName        = createValName(simpleVar)
-        val (group, field) = createGroupAndFieldName(simpleVar)
-        s"""@$strName <- s!?("get", $group, $field)"""
+    def createValues(vars: Set[simpleVariable]): String = {
+      val strings: List[String] = vars.toList.map { simpleVar =>
+        val strName       = createValName(simpleVar)
+        val strGetConsume = createGetConsume(simpleVar)
+        s"""@$strName <- $strGetConsume"""
       }
-      s"for(${strs.mkString("; ")}) {"
+      s"for(${strings.mkString("; ")}) {"
     }
 
+    def createUpdateConsume(simpleVar: simpleVariable, strExpr: String): String =
+      simpleVar match {
+        case simpleVarFieldInGroup(groupName, fieldName) =>
+          s"""s!?("update", "$groupName", "$fieldName", $strExpr)"""
+        case simpleVarField(fieldName) => s"""s!?("update", recKey, "$fieldName", $strExpr)"""
+        case simpleVarLocal(fieldName) => s"""l!?("update", "$fieldName", $strExpr)"""
+      }
+
     def procAssignment(variable: Variable, strExpr: String, addIdent: Int): String = {
-      val (group, field) = createGroupAndFieldName(createSimpleVar(variable))
-      val strBody        = recProcStatement(stms.tail, identLevel + addIdent + 1, nestedLevel)
-      s"""${id(addIdent)}for(_ <- s!?("update", $group, $field, $strExpr)) {
+      val strUpdateConsume = createUpdateConsume(createSimpleVar(variable), strExpr)
+      val strBody          = recProcStatement(stms.tail, identLevel + addIdent + 1, nestedLevel)
+      s"""${id(addIdent)}for(_ <- $strUpdateConsume) {
          #$strBody
          #${id(addIdent)}}""".stripMargin('#')
     }
@@ -240,7 +266,7 @@ object Compiler {
           (str, vars)
       }
       if (varList.nonEmpty)
-        s"""${id()}${createVals(varList)}
+        s"""${id()}${createValues(varList)}
            #$strStm
            #${id()}}""".stripMargin('#')
       else strStm
