@@ -53,13 +53,12 @@ object InitAMap extends IOApp {
 }
 
 // Create contract for processing a single job
-object MkJobContract extends IOApp {
+object AMapContract extends IOApp {
   override def run(args: List[String]): IO[ExitCode] = {
     implicit val f = Files[IO]
     val mapRules   = Path(AppConf.appConf.mappingRulesPath)
-
     for {
-      r <- processJobContract(mapRules, "{}")
+      r <- aMap(mapRules)
       _ = println(r)
     } yield ExitCode.Success
   }

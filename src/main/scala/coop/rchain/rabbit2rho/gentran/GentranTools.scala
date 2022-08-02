@@ -105,7 +105,7 @@ object GentranTools {
               recordRef.get.map { curRecord =>
                 val curV = acc.getOrElse(curRecord, Map())
                 val elementName =
-                  vs(0).split("\\*").head.filterNot(_ == '*').replace(":", "_colon_")
+                  vs(0).split("\\*").head.filterNot(_ == '*')
                 val newV = curV + (elementName -> Element(vs(1), vs(2), vs(3).toInt, vs(4).toInt))
                 acc + (curRecord -> newV)
               }
@@ -115,50 +115,105 @@ object GentranTools {
       .compile
       .lastOrError
 
-  def processJobContract[F[_]: Files: Concurrent](
-      mappingRulesPath: Path,
-      localMap: String
-  ): F[String] =
+  def aMap[F[_]: Files: Concurrent](
+      mappingRulesPath: Path
+  ): F[String] = {
+    def aMapDeclaration(
+        branching: List[(Option[String], String)],
+        recordsSchema: (Map[String, String], Map[String, Map[String, Element]])
+    ): String = {
+
+      def getChannels(chanName: String, idxs: List[Int]): List[String] =
+        idxs.map(idx => s"${chanName}_$idx")
+
+      val helper                                             = AMapHelper(branching, recordsSchema._2.mapValues(_.keySet))
+      val leafData: Map[String, List[Int]]                   = helper.getLeafData
+      val branchData: List[(String, Map[String, List[Int]])] = helper.getBranchData
+      val channels = if (leafData.nonEmpty) leafData.toList.flatMap {
+        case (name, idxs) => getChannels(name, idxs)
+      } else List("temp")
+      val strNew = channels.mkString(", ")
+      val strState =
+        if (leafData.nonEmpty)
+          leafData.toList
+            .map {
+              case (name, lData) =>
+                val lChans = getChannels(name, lData).map("*" + _)
+                s""""$name":[${lChans.mkString(", ")}]"""
+            }
+            .mkString(", ")
+        else ""
+      val strBranches =
+        if (branchData.nonEmpty)
+          branchData
+            .map {
+              case (name, lData) =>
+                val fields = lData.toList.map {
+                  case (fName, fIdxs) =>
+                    s""""$fName": [${fIdxs.mkString(", ")}]"""
+                }
+                s""""$name": {${fields.mkString(", ")}}"""
+            }
+            .mkString(",\n        ")
+        else ""
+      val strSendInit = channels.map(_ + "!(Nil)").mkString(" | ")
+      val strWait     = channels.map(chan => s"; _ <<- $chan").mkString("")
+      s"""  contract AMap(return, @"decl") = {
+        #    new $strNew in {
+        #      state!({$strState}) |
+        #      branches!({
+        #        $strBranches
+        #      }) |
+        #      $strSendInit |
+        #      for(_ <<- state; _ <<- branches$strWait) {
+        #        return!(true)
+        #      }
+        #    }
+        #  }""".stripMargin('#')
+    }
     for {
       branching     <- readBranching[F](mappingRulesPath)
       recordsSchema <- readRecordsSchema[F](mappingRulesPath)
+      strDecl       = aMapDeclaration(branching, recordsSchema)
     } yield {
-      val localBranch = (none[String], "LOCAL")
-      val branchesRho =
-        s"[${(localBranch +: branching)
-          .map { case (kOpt, k) => s"""("${kOpt.getOrElse("")}", "$k")""" }
-          .mkString(",")}]"
-      val recordsMapRho = s"""{${recordsSchema._2
-        .mapValues(_.keySet)
-        .map { case (k, v) => s""""$k": [${v.map(x => s""""$x"""").toList.mkString(", ")}]""" }
-        .mkString(", ")}}"""
-
-      s"""  // return channel, map {"LOCAL": <list of keys in local map>}, contract to process a single record
-       |  contract claim3n(ret, processRecord) = {
-       |    let
-       |      // these two values are parsed from gentran mapping rules file from branching and input records section
-       |      branching <- $branchesRho;
-       |      records <- $localMap.union($recordsMapRho);
-       |      initState <- {} // TODO make AMap available in rholang AMap(branching, records)
-       |    in {
-       |      new this, stateCh in {
-       |        ret!(*this) // spit out the contract
-       |      | stateCh!(*initState) // init state
-       |      | contract this(ret, @"getResult") = {
-       |          for (state <<- stateCh) { ret!(*state) }
-       |        }
-       |      | contract this(record, @"processRecord") = {
-       |          for (state <- stateCh) {
-       |            for (newState <- processRecord!?(*state, *record)) {
-       |              stateCh!(*newState)
-       |            }
-       |          }
-       |        }
-       |      }
-       |    }
-       |  }
-       | """.stripMargin
+      s"""new AMap, state, branches in {
+         #$strDecl |
+         #  contract AMap(return, @"get", @prefix, @field) = {
+         #    for(@s <<- state; @b <<- branches) {
+         #      let @fieldIdxs <- b.get(prefix).get(field);
+         #        @firstIdx <- fieldIdxs.nth(0);
+         #        @fields <- s.get(field);
+         #        chan <- fields.nth(firstIdx) in {
+         #         for(@res <<- chan) {return!(res)}
+         #      }
+         #    }
+         #  } |
+         #  contract AMap(return, @"update", @prefix, @field, @value) = {
+         #    for(@s <<- state; @b <<- branches) {
+         #      let @fieldIdxs <- b.get(prefix).get(field);
+         #        @fields <- s.get(field) in {
+         #        new loop in {
+         #          contract loop(@idxs) = {
+         #            match idxs {
+         #              [head ...tail] => {
+         #                let chan <- fields.nth(head) in {
+         #                  for(_ <- chan) {
+         #                    chan!(value) | 
+         #                    for( _ <<- chan ) {loop!(tail)}
+         #                  }
+         #                }
+         #              }
+         #              _ => { return!(true) }
+         #            }
+         #          } |
+         #          loop!(fieldIdxs)
+         #        } 
+         #      }
+         #    }
+         #  }
+         #}""".stripMargin('#')
     }
+  }
 
   def extendedRules[F[_]: Files: Concurrent](
       mappingRulesPath: Path
@@ -184,12 +239,14 @@ object GentranTools {
       mappingRulesPath: Path
   ): F[String] =
     for {
-      er                           <- extendedRules(mappingRulesPath)
-      (localMap, _, processRecord) = er
-      topContract                  <- processJobContract(mappingRulesPath, localMap)
+      er                                   <- extendedRules(mappingRulesPath)
+      (localMap, localInit, processRecord) = er
+      amap                                 <- aMap(mappingRulesPath)
     } yield s"""
          #new claim3n, processRecord in {
-         #$topContract
+         #$localMap |
+         #$localInit |
+         #$amap |
          #| $processRecord
          #}""".stripMargin('#')
 }

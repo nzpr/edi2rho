@@ -33,14 +33,20 @@ object Compiler {
     val decls = declList match {
       case x: Declarations => x.listdeclaration_.toList
     }
-    val strDecls     = decls.map(x => procDecl(x))
-    val strNewDecl   = strDecls.mkString(", ")
-    val strStateDecl = strDecls.map(x => s""""$x":*$x""").mkString(", ")
+    val strDecls   = decls.map(x => procDecl(x))
+    val strNewDecl = if (strDecls.nonEmpty) strDecls.mkString(", ") else "temp"
+    val strStateDecl =
+      if (strDecls.nonEmpty) strDecls.map(x => s""""$x":*$x""").mkString(", ") else "Nil"
+    val strFirstInit     = strDecls.map(x => s"""$x!(Nil) | """).mkString("")
+    val strWaitFirstInit = strDecls.map(x => s"""; _ <<- $x""").mkString("")
     s"""new LMap, state in {
        #  contract LMap(return, @"decl") = {
        #    new $strNewDecl in {
        #      state!({$strStateDecl}) |
-       #      for(_ <<- state) {return!(true)}
+       #      $strFirstInit
+       #      for(_ <<- state$strWaitFirstInit) {
+       #        return!(true)
+       #      }
        #    }
        #  } |
        #  contract LMap(return, @"get", @field) = {
