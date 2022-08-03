@@ -12,6 +12,9 @@ import fs2.{text, Stream}
 import java.io.StringReader
 
 object GentranTools {
+  val ident                                       = "  "
+  def id(identLevel: Int)                         = ident * identLevel
+  def addPadding(str: String, level: Int): String = id(level) + str.replace("\n", s"\n${id(level)}")
 
   /**
     * Read branching from Gentran mapping rules file.
@@ -118,7 +121,7 @@ object GentranTools {
   def aMap[F[_]: Files: Concurrent](
       mappingRulesPath: Path
   ): F[String] = {
-    def aMapDeclaration(
+    def aMapInit(
         branching: List[(Option[String], String)],
         recordsSchema: (Map[String, String], Map[String, Map[String, Element]])
     ): String = {
@@ -158,57 +161,55 @@ object GentranTools {
         else ""
       val strSendInit = channels.map(_ + "!(Nil)").mkString(" | ")
       val strWait     = channels.map(chan => s"; _ <<- $chan").mkString("")
-      s"""  contract AMap(return, @"decl") = {
-        #    new $strNew in {
-        #      state!({$strState}) |
-        #      branches!({
-        #        $strBranches
-        #      }) |
-        #      $strSendInit |
-        #      for(_ <<- state; _ <<- branches$strWait) {
-        #        return!(true)
-        #      }
+      s"""contract AMap(return, @"init") = {
+        #  new $strNew in {
+        #    state!({$strState}) |
+        #    branches!({
+        #      $strBranches
+        #    }) |
+        #    $strSendInit |
+        #    for(_ <<- state; _ <<- branches$strWait) {
+        #      return!(*AMap)
         #    }
-        #  }""".stripMargin('#')
+        #  }
+        #}""".stripMargin('#')
     }
     for {
       branching     <- readBranching[F](mappingRulesPath)
       recordsSchema <- readRecordsSchema[F](mappingRulesPath)
-      strDecl       = aMapDeclaration(branching, recordsSchema)
+      strInit       = aMapInit(branching, recordsSchema)
     } yield {
-      s"""new AMap, state, branches in {
-         #$strDecl |
-         #  contract AMap(return, @"get", @prefix, @field) = {
-         #    for(@s <<- state; @b <<- branches) {
-         #      let @fieldIdxs <- b.get(prefix).get(field);
-         #        @firstIdx <- fieldIdxs.nth(0);
-         #        @fields <- s.get(field);
-         #        chan <- fields.nth(firstIdx) in {
-         #         for(@res <<- chan) {return!(res)}
-         #      }
+      s"""$strInit |
+         #contract AMap(return, @"get", @prefix, @field) = {
+         #  for(@s <<- state; @b <<- branches) {
+         #    let @fieldIdxs <- b.get(prefix).get(field);
+         #      @firstIdx <- fieldIdxs.nth(0);
+         #      @fields <- s.get(field);
+         #      chan <- fields.nth(firstIdx) in {
+         #       for(@res <<- chan) {return!(res)}
          #    }
-         #  } |
-         #  contract AMap(return, @"update", @prefix, @field, @value) = {
-         #    for(@s <<- state; @b <<- branches) {
-         #      let @fieldIdxs <- b.get(prefix).get(field);
-         #        @fields <- s.get(field) in {
-         #        new loop in {
-         #          contract loop(@idxs) = {
-         #            match idxs {
-         #              [head ...tail] => {
-         #                let chan <- fields.nth(head) in {
-         #                  for(_ <- chan) {
-         #                    chan!(value) | 
-         #                    for( _ <<- chan ) {loop!(tail)}
-         #                  }
+         #  }
+         #} |
+         #contract AMap(return, @"update", @prefix, @field, @value) = {
+         #  for(@s <<- state; @b <<- branches) {
+         #    let @fieldIdxs <- b.get(prefix).get(field);
+         #      @fields <- s.get(field) in {
+         #      new loop in {
+         #        contract loop(@idxs) = {
+         #          match idxs {
+         #            [head ...tail] => {
+         #              let chan <- fields.nth(head) in {
+         #                for(_ <- chan) {
+         #                  chan!(value) | 
+         #                  for( _ <<- chan ) {loop!(tail)}
          #                }
          #              }
-         #              _ => { return!(true) }
          #            }
-         #          } |
-         #          loop!(fieldIdxs)
-         #        } 
-         #      }
+         #            _ => { return!(true) }
+         #          }
+         #        } |
+         #        loop!(fieldIdxs)
+         #      } 
          #    }
          #  }
          #}""".stripMargin('#')
@@ -217,7 +218,7 @@ object GentranTools {
 
   def extendedRules[F[_]: Files: Concurrent](
       mappingRulesPath: Path
-  ): F[(String, String, String)] =
+  ): F[(String, String)] =
     Files[F]
       .readAll(mappingRulesPath)
       .through(text.utf8.decode)
@@ -235,18 +236,90 @@ object GentranTools {
         createRhoFromAST(ast)
       }
 
+  def initStateContract(lMap: String, aMap: String): String =
+    s"""contract initState(return) = {
+       #  new LMap, AMap in {
+       #    for(l <-LMap!?("init"); s <-AMap!?("init")) {
+       #        return!((*l, *s))
+       #      } |
+       #    new state, initLocal in {  
+       #$lMap  
+       #    } |
+       #    new state, branches in {  
+       #$aMap
+       #    }
+       #  }
+       #}""".stripMargin('#')
+
+  val strHat: String =
+    """// Main contract for the demo.
+    #// Waits on 2 inputs for parsed IDOCs, processes the first one.
+    #let
+    #  @contractId <- "$$CONTRACT_ID$$";
+    #  @inputTags <- "$$INPUT_CHANNEL_TAGS$$"
+    #in { 
+    #  new
+    #    deployerId(`rho:rchain:deployerId`), deployId(`rho:rchain:deployId`),
+    #    rl(`rho:registry:lookup`), out(`rho:io:stdout`),
+    #    doMapping, i1, i2, o, tags, resultsTotal,
+    #    initState, 
+    #    processRecord
+    #  in {
+    #    // publish channels (to not use registry)
+    #    @(*deployerId, contractId)!(((*i1, *i2), *o, *tags, *resultsTotal))
+    #  | tags!(inputTags)
+    #  | new NonNegativeNumber, Nonce, NNNCh, NonceCh in {
+    #      rl!(`rho:lang:nonNegativeNumber`, *NNNCh)
+    #    | for (@(_, NonNegativeNumber) <- NNNCh) {
+    #        @NonNegativeNumber!(0, *NonceCh)// nonce contract initialized with zero
+    #      | for (Nonce <- NonceCh) {
+    #          // wait for all inputs to be filled
+    #          for(@v1 <= i1 & @v2 <= i2) {
+    #            new resultCh in {
+    #              for (result <- resultCh) {
+    #                // increase nonce, put result on a tuple name with new nonce
+    #                new nonceUpdatedCh, newValueCh in {
+    #                  Nonce!("add", 1, *nonceUpdatedCh)
+    #                | for(_ <- nonceUpdatedCh) {
+    #                    Nonce!("value", *newValueCh)
+    #                  | for (@newNonce <- newValueCh) {
+    #                      @(*o, newNonce)!(*result)
+    #                    | resultsTotal!(newNonce)
+    #                    | out!("Result ${newNonce} is persisted." %% {"newNonce":newNonce})
+    #                    }
+    #                  } 
+    #                }   
+    #              | out!("Result is: ${result}" %% {"result": *result})                                
+    #              } 
+    #            | for(@stateInit<-initState!?()) {
+    #                doMapping!(*resultCh, v1.slice(1,50), *processRecord, stateInit)
+    #              }
+    #            }
+    #          }
+    #        | out!("Contract ${contractId} is installed." %% {"contractId": contractId}) 
+    #        }
+    #      }     
+    #    }   
+    #  | contract doMapping(@result, @idocs, processRecord, stateInit) = {
+    #      new ListOpsCh in {
+    #        rl!(`rho:lang:listOps`, *ListOpsCh)
+    #      | for (@(_, *ListOps) <- ListOpsCh) {
+    #          ListOps!("fold", idocs, *stateInit, *processRecord, result)
+    #        } 
+    #      }
+    #    } |""".stripMargin('#')
+
   def contract[F[_]: Files: Concurrent](
       mappingRulesPath: Path
   ): F[String] =
     for {
-      er                                   <- extendedRules(mappingRulesPath)
-      (localMap, localInit, processRecord) = er
-      amap                                 <- aMap(mappingRulesPath)
-    } yield s"""
-         #new claim3n, processRecord in {
-         #$localMap |
-         #$localInit |
-         #$amap |
-         #| $processRecord
+      er                    <- extendedRules(mappingRulesPath)
+      (lMap, processRecord) = er
+      aMap                  <- aMap(mappingRulesPath)
+      initState             = initStateContract(addPadding(lMap, 3), addPadding(aMap, 3))
+    } yield s"""$strHat 
+         #${addPadding(processRecord, 2)} |
+         #${addPadding(initState, 2)}
+         #  }
          #}""".stripMargin('#')
 }
