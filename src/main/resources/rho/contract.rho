@@ -7,7 +7,9 @@ in {
   new
     deployerId(`rho:rchain:deployerId`), deployId(`rho:rchain:deployId`),
     rl(`rho:registry:lookup`), out(`rho:io:stdout`),
-    doMapping, i1, i2, o, tags, resultsTotal
+    doMapping, i1, i2, o, tags, resultsTotal,
+    initState, 
+    processRecord
   in {
     // publish channels (to not use registry)
     @(*deployerId, contractId)!(((*i1, *i2), *o, *tags, *resultsTotal))
@@ -34,84 +36,297 @@ in {
                   } 
                 }   
               | out!("Result is: ${result}" %% {"result": *result})                                
+              } 
+            | for(@stateInit<-initState!?()) {
+                doMapping!(*resultCh, v1.slice(1,50), *processRecord, stateInit)
               }
-            | doMapping!(v1.slice(1,50), *resultCh)
             }
           }
         | out!("Contract ${contractId} is installed." %% {"contractId": contractId}) 
         }
       }     
     }   
-    // Contract funneling number of inputs to outputs according to mapping rules
-  | contract doMapping(@idocs, @result) = {
+  | contract doMapping(@result, @idocs, processRecord, stateInit) = {
       new ListOpsCh in {
         rl!(`rho:lang:listOps`, *ListOpsCh)
       | for (@(_, *ListOps) <- ListOpsCh) {
-          new processRecord in {
-            contract processRecord(@record, @acc, recordProcessed) = {
-              match record {
-                {
-                  "E2EDK01":
-                  {
-                    "MANDT": MANDT, //(MHD, 0062)
-                    "DOCUM": DOCUM, //(MTR, NOSG)
-                    "PSGNUM": PSGNUM, //(HCT, NRIL)
-                    "BELNR": BELNR, //(CMR, CLNN)
-                    ... _
+          ListOps!("fold", idocs, *stateInit, *processRecord, result)
+        } 
+      }
+    } | 
+    contract processRecord(@(recKey, recValues),  @(*l, *s), return) = {
+      new processField, saveRecordDataLoop, processFieldLoop in {
+        contract processField(ret, @fieldName) = {
+          new BELNR, RECIPNT_NO, IDDAT, PARVW, IDDAT_colon_4, QUALF_colon_2, TEMP_IDTNR_colon_3 in {
+            contract BELNR(ret0) = {
+              for(@val_current_BELNR <- s!?("get", recKey, "BELNR")) {
+                for(_ <- l!?("update", "INP", val_current_BELNR)) {
+                  for(@val_local_INP <- l!?("get", "INP")) {
+                    for(_ <- l!?("update", "OUTP", val_local_INP.slice(2, (2 + 8)))) {
+                      for(@val_local_OUTP <- l!?("get", "OUTP")) {
+                        for(_ <- s!?("update", recKey, "BELNR", val_local_OUTP)) {
+                          ret0!(true)
+                        }
+                      }
+                    }
                   }
-                } => recordProcessed!("${acc}MHD:${MANDT}MTR:${DOCUM}HCT:${PSGNUM}CMR:${BELNR}'" %% {"acc":acc,"MANDT":MANDT,"DOCUM":DOCUM,"PSGNUM":PSGNUM,"BELNR":BELNR})
-                {
-                  "TEMP_E2EDK03":
-                  {
-                    "DATUM": DATUM //(CMR, CLDT),
-                    ... _
-                  }
-                } => recordProcessed!("${acc}CMR:${DATUM}'" %% {"acc":acc, "DATUM":DATUM })
-                {
-                  "TEMP_KA1":
-                  {
-                    "TEMP_ORT02": TEMP_ORT02, //(CLO, CLO0)
-                    ... _
-                  }
-                } => recordProcessed!("${acc}CLO:${TEMP_ORT02}'" %% {"acc": acc, "TEMP_ORT02": TEMP_ORT02})
-                {
-                  "E2EDP01":
-                  {
-                    "MENGE": MENGE, //(CMD, TCMQ),
-                    "ABGRT": ABGRT, //(CMD, HSOQ)
-                    ... _
-                  }
-                } => recordProcessed!("${acc}CMD:${MENGE}CMD:${ABGRT}'" %% {"acc": acc, "MENGE": MENGE,"ABGRT":ABGRT})
-                {
-                  "Z2EDP01":
-                  {
-                    "INITIAL_SUPP": INITIAL_SUPP, //(CMD, INSQ),
-                    "RETURN_SUPP": RETURN_SUPP, //(CMD, RPSQ),
-                    "TOS_SUPPLY_QUAN": TOS_SUPPLY_QUAN, //(CMD, TSSQ)
-                    ... _
-                  }
-                } => recordProcessed!("${acc}CMD:${INITIAL_SUPP}CMD:${RETURN_SUPP}CMD:${TOS_SUPPLY_QUAN}'" %% {"acc": acc, "INITIAL_SUPP": INITIAL_SUPP,"RETURN_SUPP":RETURN_SUPP,"TOS_SUPPLY_QUAN":TOS_SUPPLY_QUAN})
-                {
-                  "TEMP_E2EDPO3":
-                  {
-                    "DATUM": DATUM, //(CMD, IDC0)
-                    ... _
-                  }
-                } => recordProcessed!("${acc}CMD:${DATUM}'" %% {"acc": acc, "DATUM": DATUM})
-                {
-                  "TEMP_E1EDP19":
-                  {
-                    "TEMP_IDTNR": TEMP_IDTNR, //(CMD, SPR), (CMD, YRNO), (CMD, ISNO)
-                    ... _
-                  }
-                } => recordProcessed!("${acc}CMD:${TEMP_IDTNR}${TEMP_IDTNR}${TEMP_IDTNR}'" %% {"acc": acc, "TEMP_IDTNR": TEMP_IDTNR})
-                _ => recordProcessed!(acc)
+                }
               }
-            }  
-          | ListOps!("fold", idocs, "RESULT: ", *processRecord, result)
-          } 
+            } |
+            contract RECIPNT_NO(ret0) = {
+              for(@val_current_RECIPNT_NO <- s!?("get", recKey, "RECIPNT_NO")) {
+                for(_ <- s!?("update", recKey, "RECIPNT_NO", val_current_RECIPNT_NO.slice(((val_current_RECIPNT_NO.length() - 1) - 8), (val_current_RECIPNT_NO.length() - 1)))) {
+                  ret0!(true)
+                }
+              }
+            } |
+            contract IDDAT(ret0) = {
+              for(@val_current_IDDAT <- s!?("get", recKey, "IDDAT")) {
+                new ret1 in {
+                  if(val_current_IDDAT == "012") {
+                    for(@val_current_DATUM_colon_3 <- s!?("get", recKey, "DATUM_colon_3")) {
+                      for(_ <- s!?("update", "CLAIM3N", "DATUM_colon_4", val_current_DATUM_colon_3)) {
+                        ret1!(true)
+                      }
+                    }
+                  }
+                  else {
+                    ret1!(true)
+                  } |
+                  for(_<-ret1) {
+                    ret0!(true)
+                  }
+                }
+              }
+            } |
+            contract PARVW(ret0) = {
+              for(@val_current_PARVW <- s!?("get", recKey, "PARVW")) {
+                new ret1 in {
+                  if(val_current_PARVW == "WE") {
+                    for(@val_current_ORT02_colon_3 <- s!?("get", recKey, "ORT02_colon_3")) {
+                      for(_ <- s!?("update", "CLAIM3N", "TEMP_ORT02", val_current_ORT02_colon_3)) {
+                        ret1!(true)
+                      }
+                    }
+                  }
+                  else {
+                    ret1!(true)
+                  } |
+                  for(_<-ret1) {
+                    ret0!(true)
+                  }
+                }
+              }
+            } |
+            contract IDDAT_colon_4(ret0) = {
+              for(@val_current_IDDAT_colon_4 <- s!?("get", recKey, "IDDAT_colon_4")) {
+                new ret1 in {
+                  if(val_current_IDDAT_colon_4 == "032") {
+                    for(@val_current_DATUM_colon_2 <- s!?("get", recKey, "DATUM_colon_2")) {
+                      for(_ <- s!?("update", "E2EDP01", "DATUM_colon_3", val_current_DATUM_colon_2)) {
+                        ret1!(true)
+                      }
+                    }
+                  }
+                  else {
+                    ret1!(true)
+                  } |
+                  for(_<-ret1) {
+                    ret0!(true)
+                  }
+                }
+              }
+            } |
+            contract QUALF_colon_2(ret0) = {
+              for(@val_current_QUALF_colon_2 <- s!?("get", recKey, "QUALF_colon_2")) {
+                new ret1 in {
+                  if(val_current_QUALF_colon_2 == "003") {
+                    for(@val_current_IDTNR <- s!?("get", recKey, "IDTNR")) {
+                      for(_ <- s!?("update", "E2EDP01", "TEMP_IDTNR", val_current_IDTNR)) {
+                        for(@val_current_IDTNR <- s!?("get", recKey, "IDTNR")) {
+                          for(_ <- s!?("update", "E2EDP01", "TEMP_IDTNR_colon_4", val_current_IDTNR.slice(11, (11 + 1)))) {
+                            ret1!(true)
+                          }
+                        }
+                      }
+                    }
+                  }
+                  else {
+                    ret1!(true)
+                  } |
+                  for(_<-ret1) {
+                    for(@val_current_QUALF_colon_2 <- s!?("get", recKey, "QUALF_colon_2")) {
+                      new ret1 in {
+                        if(val_current_QUALF_colon_2 == "007") {
+                          for(@val_current_IDTNR <- s!?("get", recKey, "IDTNR")) {
+                            for(_ <- s!?("update", "E2EDP01", "TEMP_IDTNR_colon_2", val_current_IDTNR)) {
+                              for(@val_current_MFRNR <- s!?("get", recKey, "MFRNR")) {
+                                for(_ <- s!?("update", "E2EDP01", "TEMP_IDTNR_colon_3", val_current_MFRNR)) {
+                                  ret1!(true)
+                                }
+                              }
+                            }
+                          }
+                        }
+                        else {
+                          ret1!(true)
+                        } |
+                        for(_<-ret1) {
+                          ret0!(true)
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            } |
+            contract TEMP_IDTNR_colon_3(ret0) = {
+              ret0!(true)
+            } |
+            match fieldName {
+              "BELNR" => { for(@res <- BELNR!?()) { ret!(res) } }
+              "RECIPNT_NO" => { for(@res <- RECIPNT_NO!?()) { ret!(res) } }
+              "IDDAT" => { for(@res <- IDDAT!?()) { ret!(res) } }
+              "PARVW" => { for(@res <- PARVW!?()) { ret!(res) } }
+              "IDDAT_colon_4" => { for(@res <- IDDAT_colon_4!?()) { ret!(res) } }
+              "QUALF_colon_2" => { for(@res <- QUALF_colon_2!?()) { ret!(res) } }
+              "TEMP_IDTNR_colon_3" => { for(@res <- TEMP_IDTNR_colon_3!?()) { ret!(res) } }
+              _ => ret!(true)
+            }
+          }
+        } |
+        contract processFieldLoop(@keys) = {
+          match keys {
+            Set(head... tail) => {
+              for(_ <- processField!?(head)) { processFieldLoop!(tail) }
+            }
+            _ => { return!(true) }
+          }
+        } |
+        contract saveRecordDataLoop(@KVs) = {
+          match KVs {
+            [head... tail] => {
+              for(_ <- s!?("update", recKey, head.nth(0), head.nth(1))) {
+                saveRecordDataLoop!(tail)
+              }
+            }
+            _ => { processFieldLoop!(recValues.keys()) }
+          }
+        } |
+        saveRecordDataLoop!(recValues.toList())
+      }
+    } |
+    contract initState(return) = {
+      new LMap, AMap in {
+        for(l <-LMap!?("init"); s <-AMap!?("init")) {
+            return!((*l, *s))
+          } |
+        new state, initLocal in {  
+          contract LMap(return, @"init") = {
+            new INP, OUTP, ORT02, LIFNR in {
+              state!({"INP":*INP, "OUTP":*OUTP, "ORT02":*ORT02, "LIFNR":*LIFNR}) |
+              INP!(Nil) | OUTP!(Nil) | ORT02!(Nil) | LIFNR!(Nil) | 
+              for(_ <<- state; _ <<- INP; _ <<- OUTP; _ <<- ORT02; _ <<- LIFNR) {
+                for(_ <- initLocal!?(*LMap)) {
+                  return!(*LMap)
+                }  
+              }
+            }
+          } |
+          contract initLocal(ret0, l) = {
+            for(_ <- l!?("update", "INP", "")) {
+              for(_ <- l!?("update", "OUTP", "")) {
+                for(_ <- l!?("update", "ORT02", "")) {
+                  for(_ <- l!?("update", "LIFNR", "")) {
+                    ret0!(true)
+                  }
+                }
+              }
+            }
+          } |
+          contract LMap(return, @"get", @field) = {
+            for(@s <<- state) {
+              let chan <- s.get(field) in {
+                for(x <<- chan) {return!(*x)}
+              }
+            }    
+          } |
+          contract LMap(return, @"update", @field, @value) = {
+            for(@s <<- state) {
+              let chan <- s.get(field) in {
+                for(_ <- chan) {chan!(value) | for(_ <<- chan) {return!(true)}}
+              }
+            }
+          }  
+        } |
+        new state, branches in {  
+          contract AMap(return, @"init") = {
+            new PFACH_colon_3_0, BMNG2_0, HLEVEL_colon_11_0, PSGNUM_colon_28_0, MANDT_colon_74_0, ANRED_colon_5_0, DATUM_colon_2_1, DATUM_colon_2_0, PSGNUM_colon_9_0, NAME1_0, HWAER_0, CURCY_1, CURCY_0, ABGRU_0, WAERQ_colon_2_0, AUGRU_BEZ_0, BELNR_colon_2_0, RETURN_SUPP_0, SEGNUM_colon_16_0, IDDAT_colon_4_0, UZEIT_colon_2_1, UZEIT_colon_2_0, ANTLF_0, QUALF_colon_8_0, MANDT_colon_25_0, WKURS_0, SNDPOR_colon_2_0, EVERS_0, TELX1_colon_3_0, EDATU_OLD_0, MESTYP_0, MANDT_colon_33_0, MANDT_colon_33_1, ISONU_colon_3_0, PSGNUM_colon_30_0, MENGE_0, PSGNUM_colon_23_0, MANDT_colon_30_0, NAME2_colon_4_0, NETWR_0, SEGNUM_colon_13_0, VPREI_0, HLEVEL_colon_55_0, REGIO_colon_3_0, ABLAD_colon_4_0, PARVW_0, TELF1_0, DOCNUM_colon_18_0, SEGNUM_colon_37_0, MANDT_colon_26_0, STOCK_colon_3_0, DOCUM_colon_9_0, ORT02_colon_3_0, ZTERM_TXT_0, AUGRU_0, RECIPNT_NO_0, PSGNUM_colon_20_0, MANDT_colon_73_0, IDTNR_0, FIXMG_0, EDATU_0, EINKZ_0, INITIAL_SUPP_0, SUMID_colon_2_0, PSGNUM_colon_8_0, REFGRP_colon_2_0, MFRPN_0, FCODE_colon_3_0, GRKOR_0, NET_SALE_QUAN_0, PSGNUM_colon_27_0, DATUM_colon_3_0, DATUM_colon_3_1, TELTX_colon_3_0, KZABS_1, KZABS_0, STDMES_colon_2_0, HLEVEL_colon_14_0, MATKL_0, SNDPRN_colon_2_0, REFMES_colon_2_0, IDDAT_0, ZTERM_0, GEWEI_0, UEPOS_0, ACTION_1, ACTION_0, AMENG_0, HLEVEL_colon_8_0, DIRECT_colon_2_0, MANDT_colon_72_0, BSART_0, DOCUM_colon_57_0, EDIKURS_0, UZEIT_colon_5_0, TEMP_IDTNR_colon_4_0, DOCUM_colon_8_0, EZEIT_OLD_0, VSART_0, EXPRSS_colon_2_0, TEMP_BELNR_0, NAME3_colon_3_0, LKTEXT_0, HLEVEL_colon_17_0, PSGNUM_colon_24_0, ACTION_colon_100_0, ABRVW_0, SUNIT_colon_2_0, PSGNUM_colon_13_0, ILNNR_0, PREIS_colon_3_0, MANDT_colon_34_0, FKTYP_0, SEGNUM_colon_10_0, PSGNUM_colon_17_0, PFORT_GP_0, STATUS_colon_2_0, MFRNR_0, DOCUM_colon_14_0, RCVSAD_colon_2_0, TAGE_0, BSTZD_0, NTGEW_colon_2_0, DOCUM_colon_10_0, RCVPRT_colon_2_0, SNDLAD_colon_2_0, TEMP_IDTNR_colon_3_0, NTGEW_0, HLEVEL_colon_15_0, HLEVEL_colon_57_0, MANDT_colon_31_0, PERNR_colon_3_0, SNDPFC_colon_2_0, ORT01_0, STRAS_colon_4_0, KZAZU_1, KZAZU_0, PARGE_colon_3_0, TELF2_colon_3_0, PSGNUM_colon_10_1, PSGNUM_colon_10_0, SKFBP_0, QUALF_colon_7_0, KUNDEUINR_0, PARNR_colon_3_0, CRETIM_colon_2_0, PARTN_0, NAME4_colon_3_0, GEWEI_colon_3_0, ORGID_0, ABRVW_BEZ_0, PSGNUM_colon_26_0, MANDT_colon_18_0, PSGNUM_colon_14_0, ABGRT_0, DOCUM_colon_56_0, DOCUM_colon_16_0, DOCUM_colon_16_1, RCVLAD_colon_2_0, DOCUM_colon_17_0, RCVPOR_colon_2_0, BNAME_0, ABLAD_colon_2_0, OUTMOD_colon_2_0, PSGNUM_colon_16_0, PSGNUM_colon_16_1, CIMTYP_0, ISOAL_colon_3_0, SPRAS_0, DOCUM_colon_13_0, EIGENUINR_0, BPUMN_0, EZEIT_0, MESCOD_colon_3_0, DELCO_0, LIFSK_BEZ_0, HLEVEL_colon_13_0, AUTLF_0, PSGNUM_colon_25_0, HAUSN_colon_3_0, LIFNR_colon_3_0, BELNR_0, QUALF_colon_6_0, SNDPRT_colon_2_0, TELBX_colon_3_0, BPUMZ_0, PMENE_0, KTEXT_0, REFINT_colon_2_0, ABTNR_0, PSGNUM_colon_29_0, PAORG_0, PAGRU_0, HLEVEL_colon_16_0, HLEVEL_colon_16_1, STDVRS_colon_2_0, SEGNUM_colon_9_0, TEMP_IDTNR_colon_2_0, MANDT_colon_32_0, CREDAT_colon_2_0, LAISO_0, TEMP_IDTNR_0, POSEX_0, HLEVEL_colon_9_0, TEST_colon_2_0, ANETW_0, STD_colon_2_0, FKART_RL_0, WMENG_0, PSTYP_0, SERIAL_colon_2_0, HLEVEL_colon_10_0, DOCUM_colon_11_0, TEMP_ORT02_0, SEGNUM_colon_17_0, EMPST_0, ABFTZ_0, PSTLZ_0, PSGNUM_colon_15_0, ANRED_colon_3_0, MANDT_colon_28_0, MENEE_0, MESFCT_colon_2_0, DATUM_colon_4_0, DOCUM_colon_15_0, TOS_SUPPLY_QUAN_0, LAND1_0, VSART_BEZ_0, DOCUM_colon_55_0, SUMME_colon_2_0, KNREF_0, IHREZ_colon_3_0, LKOND_0, PEINH_0, QUALF_colon_2_0, QUALF_colon_2_1, DOCREL_colon_2_0, RCVPFC_colon_2_0, PRZNT_0, BRGEW_0, MANDT_colon_27_0, ARCKEY_colon_2_0, COUNC_colon_3_0, LIFSK_0, STRS2_colon_3_0, PSTL2_colon_3_0, RCVPRN_colon_2_0, SNDSAD_colon_2_0, IDOCTYP_0, POSNR_0, TELFX_colon_4_0, HLEVEL_colon_56_0, ORGTX_colon_2_0, PSGNUM_colon_11_0 in {
+              state!({"PFACH_colon_3":[*PFACH_colon_3_0], "BMNG2":[*BMNG2_0], "HLEVEL_colon_11":[*HLEVEL_colon_11_0], "PSGNUM_colon_28":[*PSGNUM_colon_28_0], "MANDT_colon_74":[*MANDT_colon_74_0], "ANRED_colon_5":[*ANRED_colon_5_0], "DATUM_colon_2":[*DATUM_colon_2_1, *DATUM_colon_2_0], "PSGNUM_colon_9":[*PSGNUM_colon_9_0], "NAME1":[*NAME1_0], "HWAER":[*HWAER_0], "CURCY":[*CURCY_1, *CURCY_0], "ABGRU":[*ABGRU_0], "WAERQ_colon_2":[*WAERQ_colon_2_0], "AUGRU_BEZ":[*AUGRU_BEZ_0], "BELNR_colon_2":[*BELNR_colon_2_0], "RETURN_SUPP":[*RETURN_SUPP_0], "SEGNUM_colon_16":[*SEGNUM_colon_16_0], "IDDAT_colon_4":[*IDDAT_colon_4_0], "UZEIT_colon_2":[*UZEIT_colon_2_1, *UZEIT_colon_2_0], "ANTLF":[*ANTLF_0], "QUALF_colon_8":[*QUALF_colon_8_0], "MANDT_colon_25":[*MANDT_colon_25_0], "WKURS":[*WKURS_0], "SNDPOR_colon_2":[*SNDPOR_colon_2_0], "EVERS":[*EVERS_0], "TELX1_colon_3":[*TELX1_colon_3_0], "EDATU_OLD":[*EDATU_OLD_0], "MESTYP":[*MESTYP_0], "MANDT_colon_33":[*MANDT_colon_33_0, *MANDT_colon_33_1], "ISONU_colon_3":[*ISONU_colon_3_0], "PSGNUM_colon_30":[*PSGNUM_colon_30_0], "MENGE":[*MENGE_0], "PSGNUM_colon_23":[*PSGNUM_colon_23_0], "MANDT_colon_30":[*MANDT_colon_30_0], "NAME2_colon_4":[*NAME2_colon_4_0], "NETWR":[*NETWR_0], "SEGNUM_colon_13":[*SEGNUM_colon_13_0], "VPREI":[*VPREI_0], "HLEVEL_colon_55":[*HLEVEL_colon_55_0], "REGIO_colon_3":[*REGIO_colon_3_0], "ABLAD_colon_4":[*ABLAD_colon_4_0], "PARVW":[*PARVW_0], "TELF1":[*TELF1_0], "DOCNUM_colon_18":[*DOCNUM_colon_18_0], "SEGNUM_colon_37":[*SEGNUM_colon_37_0], "MANDT_colon_26":[*MANDT_colon_26_0], "STOCK_colon_3":[*STOCK_colon_3_0], "DOCUM_colon_9":[*DOCUM_colon_9_0], "ORT02_colon_3":[*ORT02_colon_3_0], "ZTERM_TXT":[*ZTERM_TXT_0], "AUGRU":[*AUGRU_0], "RECIPNT_NO":[*RECIPNT_NO_0], "PSGNUM_colon_20":[*PSGNUM_colon_20_0], "MANDT_colon_73":[*MANDT_colon_73_0], "IDTNR":[*IDTNR_0], "FIXMG":[*FIXMG_0], "EDATU":[*EDATU_0], "EINKZ":[*EINKZ_0], "INITIAL_SUPP":[*INITIAL_SUPP_0], "SUMID_colon_2":[*SUMID_colon_2_0], "PSGNUM_colon_8":[*PSGNUM_colon_8_0], "REFGRP_colon_2":[*REFGRP_colon_2_0], "MFRPN":[*MFRPN_0], "FCODE_colon_3":[*FCODE_colon_3_0], "GRKOR":[*GRKOR_0], "NET_SALE_QUAN":[*NET_SALE_QUAN_0], "PSGNUM_colon_27":[*PSGNUM_colon_27_0], "DATUM_colon_3":[*DATUM_colon_3_0, *DATUM_colon_3_1], "TELTX_colon_3":[*TELTX_colon_3_0], "KZABS":[*KZABS_1, *KZABS_0], "STDMES_colon_2":[*STDMES_colon_2_0], "HLEVEL_colon_14":[*HLEVEL_colon_14_0], "MATKL":[*MATKL_0], "SNDPRN_colon_2":[*SNDPRN_colon_2_0], "REFMES_colon_2":[*REFMES_colon_2_0], "IDDAT":[*IDDAT_0], "ZTERM":[*ZTERM_0], "GEWEI":[*GEWEI_0], "UEPOS":[*UEPOS_0], "ACTION":[*ACTION_1, *ACTION_0], "AMENG":[*AMENG_0], "HLEVEL_colon_8":[*HLEVEL_colon_8_0], "DIRECT_colon_2":[*DIRECT_colon_2_0], "MANDT_colon_72":[*MANDT_colon_72_0], "BSART":[*BSART_0], "DOCUM_colon_57":[*DOCUM_colon_57_0], "EDIKURS":[*EDIKURS_0], "UZEIT_colon_5":[*UZEIT_colon_5_0], "TEMP_IDTNR_colon_4":[*TEMP_IDTNR_colon_4_0], "DOCUM_colon_8":[*DOCUM_colon_8_0], "EZEIT_OLD":[*EZEIT_OLD_0], "VSART":[*VSART_0], "EXPRSS_colon_2":[*EXPRSS_colon_2_0], "TEMP_BELNR":[*TEMP_BELNR_0], "NAME3_colon_3":[*NAME3_colon_3_0], "LKTEXT":[*LKTEXT_0], "HLEVEL_colon_17":[*HLEVEL_colon_17_0], "PSGNUM_colon_24":[*PSGNUM_colon_24_0], "ACTION_colon_100":[*ACTION_colon_100_0], "ABRVW":[*ABRVW_0], "SUNIT_colon_2":[*SUNIT_colon_2_0], "PSGNUM_colon_13":[*PSGNUM_colon_13_0], "ILNNR":[*ILNNR_0], "PREIS_colon_3":[*PREIS_colon_3_0], "MANDT_colon_34":[*MANDT_colon_34_0], "FKTYP":[*FKTYP_0], "SEGNUM_colon_10":[*SEGNUM_colon_10_0], "PSGNUM_colon_17":[*PSGNUM_colon_17_0], "PFORT_GP":[*PFORT_GP_0], "STATUS_colon_2":[*STATUS_colon_2_0], "MFRNR":[*MFRNR_0], "DOCUM_colon_14":[*DOCUM_colon_14_0], "RCVSAD_colon_2":[*RCVSAD_colon_2_0], "TAGE":[*TAGE_0], "BSTZD":[*BSTZD_0], "NTGEW_colon_2":[*NTGEW_colon_2_0], "DOCUM_colon_10":[*DOCUM_colon_10_0], "RCVPRT_colon_2":[*RCVPRT_colon_2_0], "SNDLAD_colon_2":[*SNDLAD_colon_2_0], "TEMP_IDTNR_colon_3":[*TEMP_IDTNR_colon_3_0], "NTGEW":[*NTGEW_0], "HLEVEL_colon_15":[*HLEVEL_colon_15_0], "HLEVEL_colon_57":[*HLEVEL_colon_57_0], "MANDT_colon_31":[*MANDT_colon_31_0], "PERNR_colon_3":[*PERNR_colon_3_0], "SNDPFC_colon_2":[*SNDPFC_colon_2_0], "ORT01":[*ORT01_0], "STRAS_colon_4":[*STRAS_colon_4_0], "KZAZU":[*KZAZU_1, *KZAZU_0], "PARGE_colon_3":[*PARGE_colon_3_0], "TELF2_colon_3":[*TELF2_colon_3_0], "PSGNUM_colon_10":[*PSGNUM_colon_10_1, *PSGNUM_colon_10_0], "SKFBP":[*SKFBP_0], "QUALF_colon_7":[*QUALF_colon_7_0], "KUNDEUINR":[*KUNDEUINR_0], "PARNR_colon_3":[*PARNR_colon_3_0], "CRETIM_colon_2":[*CRETIM_colon_2_0], "PARTN":[*PARTN_0], "NAME4_colon_3":[*NAME4_colon_3_0], "GEWEI_colon_3":[*GEWEI_colon_3_0], "ORGID":[*ORGID_0], "ABRVW_BEZ":[*ABRVW_BEZ_0], "PSGNUM_colon_26":[*PSGNUM_colon_26_0], "MANDT_colon_18":[*MANDT_colon_18_0], "PSGNUM_colon_14":[*PSGNUM_colon_14_0], "ABGRT":[*ABGRT_0], "DOCUM_colon_56":[*DOCUM_colon_56_0], "DOCUM_colon_16":[*DOCUM_colon_16_0, *DOCUM_colon_16_1], "RCVLAD_colon_2":[*RCVLAD_colon_2_0], "DOCUM_colon_17":[*DOCUM_colon_17_0], "RCVPOR_colon_2":[*RCVPOR_colon_2_0], "BNAME":[*BNAME_0], "ABLAD_colon_2":[*ABLAD_colon_2_0], "OUTMOD_colon_2":[*OUTMOD_colon_2_0], "PSGNUM_colon_16":[*PSGNUM_colon_16_0, *PSGNUM_colon_16_1], "CIMTYP":[*CIMTYP_0], "ISOAL_colon_3":[*ISOAL_colon_3_0], "SPRAS":[*SPRAS_0], "DOCUM_colon_13":[*DOCUM_colon_13_0], "EIGENUINR":[*EIGENUINR_0], "BPUMN":[*BPUMN_0], "EZEIT":[*EZEIT_0], "MESCOD_colon_3":[*MESCOD_colon_3_0], "DELCO":[*DELCO_0], "LIFSK_BEZ":[*LIFSK_BEZ_0], "HLEVEL_colon_13":[*HLEVEL_colon_13_0], "AUTLF":[*AUTLF_0], "PSGNUM_colon_25":[*PSGNUM_colon_25_0], "HAUSN_colon_3":[*HAUSN_colon_3_0], "LIFNR_colon_3":[*LIFNR_colon_3_0], "BELNR":[*BELNR_0], "QUALF_colon_6":[*QUALF_colon_6_0], "SNDPRT_colon_2":[*SNDPRT_colon_2_0], "TELBX_colon_3":[*TELBX_colon_3_0], "BPUMZ":[*BPUMZ_0], "PMENE":[*PMENE_0], "KTEXT":[*KTEXT_0], "REFINT_colon_2":[*REFINT_colon_2_0], "ABTNR":[*ABTNR_0], "PSGNUM_colon_29":[*PSGNUM_colon_29_0], "PAORG":[*PAORG_0], "PAGRU":[*PAGRU_0], "HLEVEL_colon_16":[*HLEVEL_colon_16_0, *HLEVEL_colon_16_1], "STDVRS_colon_2":[*STDVRS_colon_2_0], "SEGNUM_colon_9":[*SEGNUM_colon_9_0], "TEMP_IDTNR_colon_2":[*TEMP_IDTNR_colon_2_0], "MANDT_colon_32":[*MANDT_colon_32_0], "CREDAT_colon_2":[*CREDAT_colon_2_0], "LAISO":[*LAISO_0], "TEMP_IDTNR":[*TEMP_IDTNR_0], "POSEX":[*POSEX_0], "HLEVEL_colon_9":[*HLEVEL_colon_9_0], "TEST_colon_2":[*TEST_colon_2_0], "ANETW":[*ANETW_0], "STD_colon_2":[*STD_colon_2_0], "FKART_RL":[*FKART_RL_0], "WMENG":[*WMENG_0], "PSTYP":[*PSTYP_0], "SERIAL_colon_2":[*SERIAL_colon_2_0], "HLEVEL_colon_10":[*HLEVEL_colon_10_0], "DOCUM_colon_11":[*DOCUM_colon_11_0], "TEMP_ORT02":[*TEMP_ORT02_0], "SEGNUM_colon_17":[*SEGNUM_colon_17_0], "EMPST":[*EMPST_0], "ABFTZ":[*ABFTZ_0], "PSTLZ":[*PSTLZ_0], "PSGNUM_colon_15":[*PSGNUM_colon_15_0], "ANRED_colon_3":[*ANRED_colon_3_0], "MANDT_colon_28":[*MANDT_colon_28_0], "MENEE":[*MENEE_0], "MESFCT_colon_2":[*MESFCT_colon_2_0], "DATUM_colon_4":[*DATUM_colon_4_0], "DOCUM_colon_15":[*DOCUM_colon_15_0], "TOS_SUPPLY_QUAN":[*TOS_SUPPLY_QUAN_0], "LAND1":[*LAND1_0], "VSART_BEZ":[*VSART_BEZ_0], "DOCUM_colon_55":[*DOCUM_colon_55_0], "SUMME_colon_2":[*SUMME_colon_2_0], "KNREF":[*KNREF_0], "IHREZ_colon_3":[*IHREZ_colon_3_0], "LKOND":[*LKOND_0], "PEINH":[*PEINH_0], "QUALF_colon_2":[*QUALF_colon_2_0, *QUALF_colon_2_1], "DOCREL_colon_2":[*DOCREL_colon_2_0], "RCVPFC_colon_2":[*RCVPFC_colon_2_0], "PRZNT":[*PRZNT_0], "BRGEW":[*BRGEW_0], "MANDT_colon_27":[*MANDT_colon_27_0], "ARCKEY_colon_2":[*ARCKEY_colon_2_0], "COUNC_colon_3":[*COUNC_colon_3_0], "LIFSK":[*LIFSK_0], "STRS2_colon_3":[*STRS2_colon_3_0], "PSTL2_colon_3":[*PSTL2_colon_3_0], "RCVPRN_colon_2":[*RCVPRN_colon_2_0], "SNDSAD_colon_2":[*SNDSAD_colon_2_0], "IDOCTYP":[*IDOCTYP_0], "POSNR":[*POSNR_0], "TELFX_colon_4":[*TELFX_colon_4_0], "HLEVEL_colon_56":[*HLEVEL_colon_56_0], "ORGTX_colon_2":[*ORGTX_colon_2_0], "PSGNUM_colon_11":[*PSGNUM_colon_11_0]}) |
+              branches!({
+                "CLAIM3N": {"PFACH_colon_3": [0], "BMNG2": [0], "HLEVEL_colon_11": [0], "PSGNUM_colon_28": [0], "MANDT_colon_74": [0], "ANRED_colon_5": [0], "DATUM_colon_2": [1, 0], "PSGNUM_colon_9": [0], "NAME1": [0], "HWAER": [0], "CURCY": [1, 0], "ABGRU": [0], "WAERQ_colon_2": [0], "AUGRU_BEZ": [0], "BELNR_colon_2": [0], "RETURN_SUPP": [0], "SEGNUM_colon_16": [0], "IDDAT_colon_4": [0], "UZEIT_colon_2": [1, 0], "ANTLF": [0], "QUALF_colon_8": [0], "MANDT_colon_25": [0], "WKURS": [0], "SNDPOR_colon_2": [0], "EVERS": [0], "TELX1_colon_3": [0], "EDATU_OLD": [0], "MESTYP": [0], "MANDT_colon_33": [0, 1], "ISONU_colon_3": [0], "PSGNUM_colon_30": [0], "MENGE": [0], "PSGNUM_colon_23": [0], "MANDT_colon_30": [0], "NAME2_colon_4": [0], "NETWR": [0], "SEGNUM_colon_13": [0], "VPREI": [0], "HLEVEL_colon_55": [0], "REGIO_colon_3": [0], "ABLAD_colon_4": [0], "PARVW": [0], "TELF1": [0], "DOCNUM_colon_18": [0], "SEGNUM_colon_37": [0], "MANDT_colon_26": [0], "STOCK_colon_3": [0], "DOCUM_colon_9": [0], "ORT02_colon_3": [0], "ZTERM_TXT": [0], "AUGRU": [0], "RECIPNT_NO": [0], "PSGNUM_colon_20": [0], "MANDT_colon_73": [0], "IDTNR": [0], "FIXMG": [0], "EDATU": [0], "EINKZ": [0], "INITIAL_SUPP": [0], "SUMID_colon_2": [0], "PSGNUM_colon_8": [0], "REFGRP_colon_2": [0], "MFRPN": [0], "FCODE_colon_3": [0], "GRKOR": [0], "NET_SALE_QUAN": [0], "PSGNUM_colon_27": [0], "DATUM_colon_3": [0, 1], "TELTX_colon_3": [0], "KZABS": [1, 0], "STDMES_colon_2": [0], "HLEVEL_colon_14": [0], "MATKL": [0], "SNDPRN_colon_2": [0], "REFMES_colon_2": [0], "IDDAT": [0], "ZTERM": [0], "GEWEI": [0], "UEPOS": [0], "ACTION": [1, 0], "AMENG": [0], "HLEVEL_colon_8": [0], "DIRECT_colon_2": [0], "MANDT_colon_72": [0], "BSART": [0], "DOCUM_colon_57": [0], "EDIKURS": [0], "UZEIT_colon_5": [0], "TEMP_IDTNR_colon_4": [0], "DOCUM_colon_8": [0], "EZEIT_OLD": [0], "VSART": [0], "EXPRSS_colon_2": [0], "TEMP_BELNR": [0], "NAME3_colon_3": [0], "LKTEXT": [0], "HLEVEL_colon_17": [0], "PSGNUM_colon_24": [0], "ACTION_colon_100": [0], "ABRVW": [0], "SUNIT_colon_2": [0], "PSGNUM_colon_13": [0], "ILNNR": [0], "PREIS_colon_3": [0], "MANDT_colon_34": [0], "FKTYP": [0], "SEGNUM_colon_10": [0], "PSGNUM_colon_17": [0], "PFORT_GP": [0], "STATUS_colon_2": [0], "MFRNR": [0], "DOCUM_colon_14": [0], "RCVSAD_colon_2": [0], "TAGE": [0], "BSTZD": [0], "NTGEW_colon_2": [0], "DOCUM_colon_10": [0], "RCVPRT_colon_2": [0], "SNDLAD_colon_2": [0], "TEMP_IDTNR_colon_3": [0], "NTGEW": [0], "HLEVEL_colon_15": [0], "HLEVEL_colon_57": [0], "MANDT_colon_31": [0], "PERNR_colon_3": [0], "SNDPFC_colon_2": [0], "ORT01": [0], "STRAS_colon_4": [0], "KZAZU": [1, 0], "PARGE_colon_3": [0], "TELF2_colon_3": [0], "PSGNUM_colon_10": [1, 0], "SKFBP": [0], "QUALF_colon_7": [0], "KUNDEUINR": [0], "PARNR_colon_3": [0], "CRETIM_colon_2": [0], "PARTN": [0], "NAME4_colon_3": [0], "GEWEI_colon_3": [0], "ORGID": [0], "ABRVW_BEZ": [0], "PSGNUM_colon_26": [0], "MANDT_colon_18": [0], "PSGNUM_colon_14": [0], "ABGRT": [0], "DOCUM_colon_56": [0], "DOCUM_colon_16": [0, 1], "RCVLAD_colon_2": [0], "DOCUM_colon_17": [0], "RCVPOR_colon_2": [0], "BNAME": [0], "ABLAD_colon_2": [0], "OUTMOD_colon_2": [0], "PSGNUM_colon_16": [0, 1], "CIMTYP": [0], "ISOAL_colon_3": [0], "SPRAS": [0], "DOCUM_colon_13": [0], "EIGENUINR": [0], "BPUMN": [0], "EZEIT": [0], "MESCOD_colon_3": [0], "DELCO": [0], "LIFSK_BEZ": [0], "HLEVEL_colon_13": [0], "AUTLF": [0], "PSGNUM_colon_25": [0], "HAUSN_colon_3": [0], "LIFNR_colon_3": [0], "BELNR": [0], "QUALF_colon_6": [0], "SNDPRT_colon_2": [0], "TELBX_colon_3": [0], "BPUMZ": [0], "PMENE": [0], "KTEXT": [0], "REFINT_colon_2": [0], "ABTNR": [0], "PSGNUM_colon_29": [0], "PAORG": [0], "PAGRU": [0], "HLEVEL_colon_16": [0, 1], "STDVRS_colon_2": [0], "SEGNUM_colon_9": [0], "TEMP_IDTNR_colon_2": [0], "MANDT_colon_32": [0], "CREDAT_colon_2": [0], "LAISO": [0], "TEMP_IDTNR": [0], "POSEX": [0], "HLEVEL_colon_9": [0], "TEST_colon_2": [0], "ANETW": [0], "STD_colon_2": [0], "FKART_RL": [0], "WMENG": [0], "PSTYP": [0], "SERIAL_colon_2": [0], "HLEVEL_colon_10": [0], "DOCUM_colon_11": [0], "TEMP_ORT02": [0], "SEGNUM_colon_17": [0], "EMPST": [0], "ABFTZ": [0], "PSTLZ": [0], "PSGNUM_colon_15": [0], "ANRED_colon_3": [0], "MANDT_colon_28": [0], "MENEE": [0], "MESFCT_colon_2": [0], "DATUM_colon_4": [0], "DOCUM_colon_15": [0], "TOS_SUPPLY_QUAN": [0], "LAND1": [0], "VSART_BEZ": [0], "DOCUM_colon_55": [0], "SUMME_colon_2": [0], "KNREF": [0], "IHREZ_colon_3": [0], "LKOND": [0], "PEINH": [0], "QUALF_colon_2": [0, 1], "DOCREL_colon_2": [0], "RCVPFC_colon_2": [0], "PRZNT": [0], "BRGEW": [0], "MANDT_colon_27": [0], "ARCKEY_colon_2": [0], "COUNC_colon_3": [0], "LIFSK": [0], "STRS2_colon_3": [0], "PSTL2_colon_3": [0], "RCVPRN_colon_2": [0], "SNDSAD_colon_2": [0], "IDOCTYP": [0], "POSNR": [0], "TELFX_colon_4": [0], "HLEVEL_colon_56": [0], "ORGTX_colon_2": [0], "PSGNUM_colon_11": [0]},
+                  "E2EDK03": {"PSGNUM_colon_23": [0], "DATUM_colon_3": [0], "HLEVEL_colon_14": [0], "IDDAT": [0], "UZEIT_colon_5": [0], "DOCUM_colon_14": [0], "MANDT_colon_31": [0], "PSGNUM_colon_14": [0]},
+                  "E2EDK18": {"MANDT_colon_74": [0], "QUALF_colon_8": [0], "PSGNUM_colon_30": [0], "ZTERM_TXT": [0], "DOCUM_colon_57": [0], "TAGE": [0], "HLEVEL_colon_57": [0], "PSGNUM_colon_29": [0], "PRZNT": [0]},
+                  "E2EDP01": {"BMNG2": [0], "DATUM_colon_2": [0], "PSGNUM_colon_9": [0], "CURCY": [0], "ABGRU": [0], "RETURN_SUPP": [0], "SEGNUM_colon_16": [0], "IDDAT_colon_4": [0], "UZEIT_colon_2": [0], "ANTLF": [0], "EVERS": [0], "EDATU_OLD": [0], "MANDT_colon_33": [1], "MENGE": [0], "MANDT_colon_30": [0], "NETWR": [0], "SEGNUM_colon_13": [0], "VPREI": [0], "MANDT_colon_26": [0], "DOCUM_colon_9": [0], "IDTNR": [0], "FIXMG": [0], "EDATU": [0], "EINKZ": [0], "INITIAL_SUPP": [0], "MFRPN": [0], "GRKOR": [0], "NET_SALE_QUAN": [0], "DATUM_colon_3": [1], "KZABS": [0], "MATKL": [0], "GEWEI": [0], "UEPOS": [0], "ACTION": [0], "AMENG": [0], "TEMP_IDTNR_colon_4": [0], "EZEIT_OLD": [0], "TEMP_BELNR": [0], "HLEVEL_colon_17": [0], "ACTION_colon_100": [0], "PSGNUM_colon_13": [0], "PREIS_colon_3": [0], "MANDT_colon_34": [0], "SEGNUM_colon_10": [0], "PSGNUM_colon_17": [0], "MFRNR": [0], "DOCUM_colon_10": [0], "TEMP_IDTNR_colon_3": [0], "NTGEW": [0], "KZAZU": [0], "PSGNUM_colon_10": [1], "SKFBP": [0], "ABGRT": [0], "DOCUM_colon_16": [1], "DOCUM_colon_17": [0], "PSGNUM_colon_16": [1], "DOCUM_colon_13": [0], "BPUMN": [0], "EZEIT": [0], "HLEVEL_colon_13": [0], "BPUMZ": [0], "PMENE": [0], "KTEXT": [0], "HLEVEL_colon_16": [1], "SEGNUM_colon_9": [0], "TEMP_IDTNR_colon_2": [0], "TEMP_IDTNR": [0], "POSEX": [0], "HLEVEL_colon_9": [0], "ANETW": [0], "WMENG": [0], "PSTYP": [0], "HLEVEL_colon_10": [0], "SEGNUM_colon_17": [0], "ABFTZ": [0], "MENEE": [0], "TOS_SUPPLY_QUAN": [0], "PEINH": [0], "QUALF_colon_2": [1], "MANDT_colon_27": [0]},
+                  "E2EDK14": {"PSGNUM_colon_24": [0], "HLEVEL_colon_15": [0], "ORGID": [0], "QUALF_colon_6": [0], "MANDT_colon_32": [0], "PSGNUM_colon_15": [0], "DOCUM_colon_15": [0]},
+                  "TEMP_E2EDK03": {"DATUM_colon_4": [0]},
+                  "E1EDKA1": {"PFACH_colon_3": [0], "ANRED_colon_5": [0], "NAME1": [0], "MANDT_colon_25": [0], "TELX1_colon_3": [0], "ISONU_colon_3": [0], "NAME2_colon_4": [0], "REGIO_colon_3": [0], "ABLAD_colon_4": [0], "PARVW": [0], "TELF1": [0], "STOCK_colon_3": [0], "ORT02_colon_3": [0], "PSGNUM_colon_8": [0], "FCODE_colon_3": [0], "TELTX_colon_3": [0], "HLEVEL_colon_8": [0], "DOCUM_colon_8": [0], "NAME3_colon_3": [0], "ILNNR": [0], "PFORT_GP": [0], "PERNR_colon_3": [0], "ORT01": [0], "STRAS_colon_4": [0], "PARGE_colon_3": [0], "TELF2_colon_3": [0], "PSGNUM_colon_10": [0], "PARNR_colon_3": [0], "PARTN": [0], "NAME4_colon_3": [0], "BNAME": [0], "ISOAL_colon_3": [0], "SPRAS": [0], "HAUSN_colon_3": [0], "LIFNR_colon_3": [0], "TELBX_colon_3": [0], "PAORG": [0], "PAGRU": [0], "LAISO": [0], "PSTLZ": [0], "ANRED_colon_3": [0], "LAND1": [0], "KNREF": [0], "IHREZ_colon_3": [0], "COUNC_colon_3": [0], "STRS2_colon_3": [0], "PSTL2_colon_3": [0], "TELFX_colon_4": [0], "ORGTX_colon_2": [0]},
+                  "E2EDS01_colon_2": {"WAERQ_colon_2": [0], "HLEVEL_colon_55": [0], "SEGNUM_colon_37": [0], "SUMID_colon_2": [0], "MANDT_colon_72": [0], "SUNIT_colon_2": [0], "PSGNUM_colon_26": [0], "DOCUM_colon_55": [0], "SUMME_colon_2": [0]},
+                  "E2EDK02": {"HLEVEL_colon_11": [0], "DATUM_colon_2": [1], "BELNR_colon_2": [0], "UZEIT_colon_2": [1], "PSGNUM_colon_20": [0], "DOCUM_colon_11": [0], "MANDT_colon_28": [0], "QUALF_colon_2": [0], "POSNR": [0], "PSGNUM_colon_11": [0]},
+                  "E2EDK17": {"PSGNUM_colon_28": [0], "MANDT_colon_73": [0], "PSGNUM_colon_27": [0], "LKTEXT": [0], "QUALF_colon_7": [0], "DOCUM_colon_56": [0], "LKOND": [0], "HLEVEL_colon_56": [0]},
+                  "E1EDK01": {"HWAER": [0], "CURCY": [1], "AUGRU_BEZ": [0], "WKURS": [0], "MANDT_colon_33": [0], "AUGRU": [0], "RECIPNT_NO": [0], "KZABS": [1], "ZTERM": [0], "ACTION": [1], "BSART": [0], "EDIKURS": [0], "VSART": [0], "ABRVW": [0], "FKTYP": [0], "BSTZD": [0], "NTGEW_colon_2": [0], "KZAZU": [1], "KUNDEUINR": [0], "GEWEI_colon_3": [0], "ABRVW_BEZ": [0], "DOCUM_colon_16": [0], "ABLAD_colon_2": [0], "PSGNUM_colon_16": [0], "EIGENUINR": [0], "DELCO": [0], "LIFSK_BEZ": [0], "AUTLF": [0], "PSGNUM_colon_25": [0], "BELNR": [0], "ABTNR": [0], "HLEVEL_colon_16": [0], "FKART_RL": [0], "EMPST": [0], "VSART_BEZ": [0], "BRGEW": [0], "LIFSK": [0]},
+                  "TEMP_KA1": {"TEMP_ORT02": [0]},
+                  "EDI_DC": {"SNDPOR_colon_2": [0], "MESTYP": [0], "DOCNUM_colon_18": [0], "REFGRP_colon_2": [0], "STDMES_colon_2": [0], "SNDPRN_colon_2": [0], "REFMES_colon_2": [0], "DIRECT_colon_2": [0], "EXPRSS_colon_2": [0], "STATUS_colon_2": [0], "RCVSAD_colon_2": [0], "RCVPRT_colon_2": [0], "SNDLAD_colon_2": [0], "SNDPFC_colon_2": [0], "CRETIM_colon_2": [0], "MANDT_colon_18": [0], "RCVLAD_colon_2": [0], "RCVPOR_colon_2": [0], "OUTMOD_colon_2": [0], "CIMTYP": [0], "MESCOD_colon_3": [0], "SNDPRT_colon_2": [0], "REFINT_colon_2": [0], "STDVRS_colon_2": [0], "CREDAT_colon_2": [0], "TEST_colon_2": [0], "STD_colon_2": [0], "SERIAL_colon_2": [0], "MESFCT_colon_2": [0], "DOCREL_colon_2": [0], "RCVPFC_colon_2": [0], "ARCKEY_colon_2": [0], "RCVPRN_colon_2": [0], "SNDSAD_colon_2": [0], "IDOCTYP": [0]},
+                  "E2EDPO3": {"DATUM_colon_2": [0], "IDDAT_colon_4": [0], "UZEIT_colon_2": [0], "MANDT_colon_30": [0], "SEGNUM_colon_13": [0], "PSGNUM_colon_13": [0], "DOCUM_colon_13": [0], "HLEVEL_colon_13": [0]},
+                  "TEMP_E1EDP19": {"TEMP_IDTNR_colon_2": [0], "TEMP_IDTNR_colon_4": [0], "TEMP_IDTNR": [0], "TEMP_IDTNR_colon_3": [0]},
+                  "TEMP_E2EDPO3": {"DATUM_colon_3": [1]},
+                  "E2EDP20": {"EDATU_OLD": [0], "EDATU": [0], "AMENG": [0], "EZEIT_OLD": [0], "ACTION_colon_100": [0], "SEGNUM_colon_10": [0], "DOCUM_colon_10": [0], "PSGNUM_colon_10": [1], "EZEIT": [0], "WMENG": [0], "HLEVEL_colon_10": [0], "MANDT_colon_27": [0]},
+                  "Z2EDP01": {"RETURN_SUPP": [0], "SEGNUM_colon_16": [0], "MANDT_colon_33": [1], "INITIAL_SUPP": [0], "NET_SALE_QUAN": [0], "DOCUM_colon_16": [1], "PSGNUM_colon_16": [1], "HLEVEL_colon_16": [1], "TOS_SUPPLY_QUAN": [0]},
+                  "E2EDP01_colon_2": {"BMNG2": [0], "CURCY": [0], "ABGRU": [0], "ANTLF": [0], "EVERS": [0], "MENGE": [0], "NETWR": [0], "VPREI": [0], "FIXMG": [0], "EINKZ": [0], "GRKOR": [0], "KZABS": [0], "MATKL": [0], "GEWEI": [0], "UEPOS": [0], "ACTION": [0], "TEMP_BELNR": [0], "HLEVEL_colon_17": [0], "PREIS_colon_3": [0], "MANDT_colon_34": [0], "PSGNUM_colon_17": [0], "NTGEW": [0], "KZAZU": [0], "SKFBP": [0], "ABGRT": [0], "DOCUM_colon_17": [0], "BPUMN": [0], "BPUMZ": [0], "PMENE": [0], "POSEX": [0], "ANETW": [0], "PSTYP": [0], "SEGNUM_colon_17": [0], "ABFTZ": [0], "MENEE": [0], "PEINH": [0]},
+                  "E1EDP19": {"PSGNUM_colon_9": [0], "MANDT_colon_26": [0], "DOCUM_colon_9": [0], "IDTNR": [0], "MFRPN": [0], "MFRNR": [0], "KTEXT": [0], "SEGNUM_colon_9": [0], "HLEVEL_colon_9": [0], "QUALF_colon_2": [1]},
+                  "E2EDKA1": {"PFACH_colon_3": [0], "ANRED_colon_5": [0], "NAME1": [0], "MANDT_colon_25": [0], "TELX1_colon_3": [0], "ISONU_colon_3": [0], "NAME2_colon_4": [0], "REGIO_colon_3": [0], "ABLAD_colon_4": [0], "PARVW": [0], "TELF1": [0], "STOCK_colon_3": [0], "ORT02_colon_3": [0], "PSGNUM_colon_8": [0], "FCODE_colon_3": [0], "TELTX_colon_3": [0], "HLEVEL_colon_8": [0], "DOCUM_colon_8": [0], "NAME3_colon_3": [0], "ILNNR": [0], "PFORT_GP": [0], "PERNR_colon_3": [0], "ORT01": [0], "STRAS_colon_4": [0], "PARGE_colon_3": [0], "TELF2_colon_3": [0], "PSGNUM_colon_10": [0], "PARNR_colon_3": [0], "PARTN": [0], "NAME4_colon_3": [0], "BNAME": [0], "ISOAL_colon_3": [0], "SPRAS": [0], "HAUSN_colon_3": [0], "LIFNR_colon_3": [0], "TELBX_colon_3": [0], "PAORG": [0], "PAGRU": [0], "LAISO": [0], "PSTLZ": [0], "ANRED_colon_3": [0], "LAND1": [0], "KNREF": [0], "IHREZ_colon_3": [0], "COUNC_colon_3": [0], "STRS2_colon_3": [0], "PSTL2_colon_3": [0], "TELFX_colon_4": [0], "ORGTX_colon_2": [0]}
+              }) |
+              PFACH_colon_3_0!(Nil) | BMNG2_0!(Nil) | HLEVEL_colon_11_0!(Nil) | PSGNUM_colon_28_0!(Nil) | MANDT_colon_74_0!(Nil) | ANRED_colon_5_0!(Nil) | DATUM_colon_2_1!(Nil) | DATUM_colon_2_0!(Nil) | PSGNUM_colon_9_0!(Nil) | NAME1_0!(Nil) | HWAER_0!(Nil) | CURCY_1!(Nil) | CURCY_0!(Nil) | ABGRU_0!(Nil) | WAERQ_colon_2_0!(Nil) | AUGRU_BEZ_0!(Nil) | BELNR_colon_2_0!(Nil) | RETURN_SUPP_0!(Nil) | SEGNUM_colon_16_0!(Nil) | IDDAT_colon_4_0!(Nil) | UZEIT_colon_2_1!(Nil) | UZEIT_colon_2_0!(Nil) | ANTLF_0!(Nil) | QUALF_colon_8_0!(Nil) | MANDT_colon_25_0!(Nil) | WKURS_0!(Nil) | SNDPOR_colon_2_0!(Nil) | EVERS_0!(Nil) | TELX1_colon_3_0!(Nil) | EDATU_OLD_0!(Nil) | MESTYP_0!(Nil) | MANDT_colon_33_0!(Nil) | MANDT_colon_33_1!(Nil) | ISONU_colon_3_0!(Nil) | PSGNUM_colon_30_0!(Nil) | MENGE_0!(Nil) | PSGNUM_colon_23_0!(Nil) | MANDT_colon_30_0!(Nil) | NAME2_colon_4_0!(Nil) | NETWR_0!(Nil) | SEGNUM_colon_13_0!(Nil) | VPREI_0!(Nil) | HLEVEL_colon_55_0!(Nil) | REGIO_colon_3_0!(Nil) | ABLAD_colon_4_0!(Nil) | PARVW_0!(Nil) | TELF1_0!(Nil) | DOCNUM_colon_18_0!(Nil) | SEGNUM_colon_37_0!(Nil) | MANDT_colon_26_0!(Nil) | STOCK_colon_3_0!(Nil) | DOCUM_colon_9_0!(Nil) | ORT02_colon_3_0!(Nil) | ZTERM_TXT_0!(Nil) | AUGRU_0!(Nil) | RECIPNT_NO_0!(Nil) | PSGNUM_colon_20_0!(Nil) | MANDT_colon_73_0!(Nil) | IDTNR_0!(Nil) | FIXMG_0!(Nil) | EDATU_0!(Nil) | EINKZ_0!(Nil) | INITIAL_SUPP_0!(Nil) | SUMID_colon_2_0!(Nil) | PSGNUM_colon_8_0!(Nil) | REFGRP_colon_2_0!(Nil) | MFRPN_0!(Nil) | FCODE_colon_3_0!(Nil) | GRKOR_0!(Nil) | NET_SALE_QUAN_0!(Nil) | PSGNUM_colon_27_0!(Nil) | DATUM_colon_3_0!(Nil) | DATUM_colon_3_1!(Nil) | TELTX_colon_3_0!(Nil) | KZABS_1!(Nil) | KZABS_0!(Nil) | STDMES_colon_2_0!(Nil) | HLEVEL_colon_14_0!(Nil) | MATKL_0!(Nil) | SNDPRN_colon_2_0!(Nil) | REFMES_colon_2_0!(Nil) | IDDAT_0!(Nil) | ZTERM_0!(Nil) | GEWEI_0!(Nil) | UEPOS_0!(Nil) | ACTION_1!(Nil) | ACTION_0!(Nil) | AMENG_0!(Nil) | HLEVEL_colon_8_0!(Nil) | DIRECT_colon_2_0!(Nil) | MANDT_colon_72_0!(Nil) | BSART_0!(Nil) | DOCUM_colon_57_0!(Nil) | EDIKURS_0!(Nil) | UZEIT_colon_5_0!(Nil) | TEMP_IDTNR_colon_4_0!(Nil) | DOCUM_colon_8_0!(Nil) | EZEIT_OLD_0!(Nil) | VSART_0!(Nil) | EXPRSS_colon_2_0!(Nil) | TEMP_BELNR_0!(Nil) | NAME3_colon_3_0!(Nil) | LKTEXT_0!(Nil) | HLEVEL_colon_17_0!(Nil) | PSGNUM_colon_24_0!(Nil) | ACTION_colon_100_0!(Nil) | ABRVW_0!(Nil) | SUNIT_colon_2_0!(Nil) | PSGNUM_colon_13_0!(Nil) | ILNNR_0!(Nil) | PREIS_colon_3_0!(Nil) | MANDT_colon_34_0!(Nil) | FKTYP_0!(Nil) | SEGNUM_colon_10_0!(Nil) | PSGNUM_colon_17_0!(Nil) | PFORT_GP_0!(Nil) | STATUS_colon_2_0!(Nil) | MFRNR_0!(Nil) | DOCUM_colon_14_0!(Nil) | RCVSAD_colon_2_0!(Nil) | TAGE_0!(Nil) | BSTZD_0!(Nil) | NTGEW_colon_2_0!(Nil) | DOCUM_colon_10_0!(Nil) | RCVPRT_colon_2_0!(Nil) | SNDLAD_colon_2_0!(Nil) | TEMP_IDTNR_colon_3_0!(Nil) | NTGEW_0!(Nil) | HLEVEL_colon_15_0!(Nil) | HLEVEL_colon_57_0!(Nil) | MANDT_colon_31_0!(Nil) | PERNR_colon_3_0!(Nil) | SNDPFC_colon_2_0!(Nil) | ORT01_0!(Nil) | STRAS_colon_4_0!(Nil) | KZAZU_1!(Nil) | KZAZU_0!(Nil) | PARGE_colon_3_0!(Nil) | TELF2_colon_3_0!(Nil) | PSGNUM_colon_10_1!(Nil) | PSGNUM_colon_10_0!(Nil) | SKFBP_0!(Nil) | QUALF_colon_7_0!(Nil) | KUNDEUINR_0!(Nil) | PARNR_colon_3_0!(Nil) | CRETIM_colon_2_0!(Nil) | PARTN_0!(Nil) | NAME4_colon_3_0!(Nil) | GEWEI_colon_3_0!(Nil) | ORGID_0!(Nil) | ABRVW_BEZ_0!(Nil) | PSGNUM_colon_26_0!(Nil) | MANDT_colon_18_0!(Nil) | PSGNUM_colon_14_0!(Nil) | ABGRT_0!(Nil) | DOCUM_colon_56_0!(Nil) | DOCUM_colon_16_0!(Nil) | DOCUM_colon_16_1!(Nil) | RCVLAD_colon_2_0!(Nil) | DOCUM_colon_17_0!(Nil) | RCVPOR_colon_2_0!(Nil) | BNAME_0!(Nil) | ABLAD_colon_2_0!(Nil) | OUTMOD_colon_2_0!(Nil) | PSGNUM_colon_16_0!(Nil) | PSGNUM_colon_16_1!(Nil) | CIMTYP_0!(Nil) | ISOAL_colon_3_0!(Nil) | SPRAS_0!(Nil) | DOCUM_colon_13_0!(Nil) | EIGENUINR_0!(Nil) | BPUMN_0!(Nil) | EZEIT_0!(Nil) | MESCOD_colon_3_0!(Nil) | DELCO_0!(Nil) | LIFSK_BEZ_0!(Nil) | HLEVEL_colon_13_0!(Nil) | AUTLF_0!(Nil) | PSGNUM_colon_25_0!(Nil) | HAUSN_colon_3_0!(Nil) | LIFNR_colon_3_0!(Nil) | BELNR_0!(Nil) | QUALF_colon_6_0!(Nil) | SNDPRT_colon_2_0!(Nil) | TELBX_colon_3_0!(Nil) | BPUMZ_0!(Nil) | PMENE_0!(Nil) | KTEXT_0!(Nil) | REFINT_colon_2_0!(Nil) | ABTNR_0!(Nil) | PSGNUM_colon_29_0!(Nil) | PAORG_0!(Nil) | PAGRU_0!(Nil) | HLEVEL_colon_16_0!(Nil) | HLEVEL_colon_16_1!(Nil) | STDVRS_colon_2_0!(Nil) | SEGNUM_colon_9_0!(Nil) | TEMP_IDTNR_colon_2_0!(Nil) | MANDT_colon_32_0!(Nil) | CREDAT_colon_2_0!(Nil) | LAISO_0!(Nil) | TEMP_IDTNR_0!(Nil) | POSEX_0!(Nil) | HLEVEL_colon_9_0!(Nil) | TEST_colon_2_0!(Nil) | ANETW_0!(Nil) | STD_colon_2_0!(Nil) | FKART_RL_0!(Nil) | WMENG_0!(Nil) | PSTYP_0!(Nil) | SERIAL_colon_2_0!(Nil) | HLEVEL_colon_10_0!(Nil) | DOCUM_colon_11_0!(Nil) | TEMP_ORT02_0!(Nil) | SEGNUM_colon_17_0!(Nil) | EMPST_0!(Nil) | ABFTZ_0!(Nil) | PSTLZ_0!(Nil) | PSGNUM_colon_15_0!(Nil) | ANRED_colon_3_0!(Nil) | MANDT_colon_28_0!(Nil) | MENEE_0!(Nil) | MESFCT_colon_2_0!(Nil) | DATUM_colon_4_0!(Nil) | DOCUM_colon_15_0!(Nil) | TOS_SUPPLY_QUAN_0!(Nil) | LAND1_0!(Nil) | VSART_BEZ_0!(Nil) | DOCUM_colon_55_0!(Nil) | SUMME_colon_2_0!(Nil) | KNREF_0!(Nil) | IHREZ_colon_3_0!(Nil) | LKOND_0!(Nil) | PEINH_0!(Nil) | QUALF_colon_2_0!(Nil) | QUALF_colon_2_1!(Nil) | DOCREL_colon_2_0!(Nil) | RCVPFC_colon_2_0!(Nil) | PRZNT_0!(Nil) | BRGEW_0!(Nil) | MANDT_colon_27_0!(Nil) | ARCKEY_colon_2_0!(Nil) | COUNC_colon_3_0!(Nil) | LIFSK_0!(Nil) | STRS2_colon_3_0!(Nil) | PSTL2_colon_3_0!(Nil) | RCVPRN_colon_2_0!(Nil) | SNDSAD_colon_2_0!(Nil) | IDOCTYP_0!(Nil) | POSNR_0!(Nil) | TELFX_colon_4_0!(Nil) | HLEVEL_colon_56_0!(Nil) | ORGTX_colon_2_0!(Nil) | PSGNUM_colon_11_0!(Nil) |
+              for(_ <<- state; _ <<- branches; _ <<- PFACH_colon_3_0; _ <<- BMNG2_0; _ <<- HLEVEL_colon_11_0; _ <<- PSGNUM_colon_28_0; _ <<- MANDT_colon_74_0; _ <<- ANRED_colon_5_0; _ <<- DATUM_colon_2_1; _ <<- DATUM_colon_2_0; _ <<- PSGNUM_colon_9_0; _ <<- NAME1_0; _ <<- HWAER_0; _ <<- CURCY_1; _ <<- CURCY_0; _ <<- ABGRU_0; _ <<- WAERQ_colon_2_0; _ <<- AUGRU_BEZ_0; _ <<- BELNR_colon_2_0; _ <<- RETURN_SUPP_0; _ <<- SEGNUM_colon_16_0; _ <<- IDDAT_colon_4_0; _ <<- UZEIT_colon_2_1; _ <<- UZEIT_colon_2_0; _ <<- ANTLF_0; _ <<- QUALF_colon_8_0; _ <<- MANDT_colon_25_0; _ <<- WKURS_0; _ <<- SNDPOR_colon_2_0; _ <<- EVERS_0; _ <<- TELX1_colon_3_0; _ <<- EDATU_OLD_0; _ <<- MESTYP_0; _ <<- MANDT_colon_33_0; _ <<- MANDT_colon_33_1; _ <<- ISONU_colon_3_0; _ <<- PSGNUM_colon_30_0; _ <<- MENGE_0; _ <<- PSGNUM_colon_23_0; _ <<- MANDT_colon_30_0; _ <<- NAME2_colon_4_0; _ <<- NETWR_0; _ <<- SEGNUM_colon_13_0; _ <<- VPREI_0; _ <<- HLEVEL_colon_55_0; _ <<- REGIO_colon_3_0; _ <<- ABLAD_colon_4_0; _ <<- PARVW_0; _ <<- TELF1_0; _ <<- DOCNUM_colon_18_0; _ <<- SEGNUM_colon_37_0; _ <<- MANDT_colon_26_0; _ <<- STOCK_colon_3_0; _ <<- DOCUM_colon_9_0; _ <<- ORT02_colon_3_0; _ <<- ZTERM_TXT_0; _ <<- AUGRU_0; _ <<- RECIPNT_NO_0; _ <<- PSGNUM_colon_20_0; _ <<- MANDT_colon_73_0; _ <<- IDTNR_0; _ <<- FIXMG_0; _ <<- EDATU_0; _ <<- EINKZ_0; _ <<- INITIAL_SUPP_0; _ <<- SUMID_colon_2_0; _ <<- PSGNUM_colon_8_0; _ <<- REFGRP_colon_2_0; _ <<- MFRPN_0; _ <<- FCODE_colon_3_0; _ <<- GRKOR_0; _ <<- NET_SALE_QUAN_0; _ <<- PSGNUM_colon_27_0; _ <<- DATUM_colon_3_0; _ <<- DATUM_colon_3_1; _ <<- TELTX_colon_3_0; _ <<- KZABS_1; _ <<- KZABS_0; _ <<- STDMES_colon_2_0; _ <<- HLEVEL_colon_14_0; _ <<- MATKL_0; _ <<- SNDPRN_colon_2_0; _ <<- REFMES_colon_2_0; _ <<- IDDAT_0; _ <<- ZTERM_0; _ <<- GEWEI_0; _ <<- UEPOS_0; _ <<- ACTION_1; _ <<- ACTION_0; _ <<- AMENG_0; _ <<- HLEVEL_colon_8_0; _ <<- DIRECT_colon_2_0; _ <<- MANDT_colon_72_0; _ <<- BSART_0; _ <<- DOCUM_colon_57_0; _ <<- EDIKURS_0; _ <<- UZEIT_colon_5_0; _ <<- TEMP_IDTNR_colon_4_0; _ <<- DOCUM_colon_8_0; _ <<- EZEIT_OLD_0; _ <<- VSART_0; _ <<- EXPRSS_colon_2_0; _ <<- TEMP_BELNR_0; _ <<- NAME3_colon_3_0; _ <<- LKTEXT_0; _ <<- HLEVEL_colon_17_0; _ <<- PSGNUM_colon_24_0; _ <<- ACTION_colon_100_0; _ <<- ABRVW_0; _ <<- SUNIT_colon_2_0; _ <<- PSGNUM_colon_13_0; _ <<- ILNNR_0; _ <<- PREIS_colon_3_0; _ <<- MANDT_colon_34_0; _ <<- FKTYP_0; _ <<- SEGNUM_colon_10_0; _ <<- PSGNUM_colon_17_0; _ <<- PFORT_GP_0; _ <<- STATUS_colon_2_0; _ <<- MFRNR_0; _ <<- DOCUM_colon_14_0; _ <<- RCVSAD_colon_2_0; _ <<- TAGE_0; _ <<- BSTZD_0; _ <<- NTGEW_colon_2_0; _ <<- DOCUM_colon_10_0; _ <<- RCVPRT_colon_2_0; _ <<- SNDLAD_colon_2_0; _ <<- TEMP_IDTNR_colon_3_0; _ <<- NTGEW_0; _ <<- HLEVEL_colon_15_0; _ <<- HLEVEL_colon_57_0; _ <<- MANDT_colon_31_0; _ <<- PERNR_colon_3_0; _ <<- SNDPFC_colon_2_0; _ <<- ORT01_0; _ <<- STRAS_colon_4_0; _ <<- KZAZU_1; _ <<- KZAZU_0; _ <<- PARGE_colon_3_0; _ <<- TELF2_colon_3_0; _ <<- PSGNUM_colon_10_1; _ <<- PSGNUM_colon_10_0; _ <<- SKFBP_0; _ <<- QUALF_colon_7_0; _ <<- KUNDEUINR_0; _ <<- PARNR_colon_3_0; _ <<- CRETIM_colon_2_0; _ <<- PARTN_0; _ <<- NAME4_colon_3_0; _ <<- GEWEI_colon_3_0; _ <<- ORGID_0; _ <<- ABRVW_BEZ_0; _ <<- PSGNUM_colon_26_0; _ <<- MANDT_colon_18_0; _ <<- PSGNUM_colon_14_0; _ <<- ABGRT_0; _ <<- DOCUM_colon_56_0; _ <<- DOCUM_colon_16_0; _ <<- DOCUM_colon_16_1; _ <<- RCVLAD_colon_2_0; _ <<- DOCUM_colon_17_0; _ <<- RCVPOR_colon_2_0; _ <<- BNAME_0; _ <<- ABLAD_colon_2_0; _ <<- OUTMOD_colon_2_0; _ <<- PSGNUM_colon_16_0; _ <<- PSGNUM_colon_16_1; _ <<- CIMTYP_0; _ <<- ISOAL_colon_3_0; _ <<- SPRAS_0; _ <<- DOCUM_colon_13_0; _ <<- EIGENUINR_0; _ <<- BPUMN_0; _ <<- EZEIT_0; _ <<- MESCOD_colon_3_0; _ <<- DELCO_0; _ <<- LIFSK_BEZ_0; _ <<- HLEVEL_colon_13_0; _ <<- AUTLF_0; _ <<- PSGNUM_colon_25_0; _ <<- HAUSN_colon_3_0; _ <<- LIFNR_colon_3_0; _ <<- BELNR_0; _ <<- QUALF_colon_6_0; _ <<- SNDPRT_colon_2_0; _ <<- TELBX_colon_3_0; _ <<- BPUMZ_0; _ <<- PMENE_0; _ <<- KTEXT_0; _ <<- REFINT_colon_2_0; _ <<- ABTNR_0; _ <<- PSGNUM_colon_29_0; _ <<- PAORG_0; _ <<- PAGRU_0; _ <<- HLEVEL_colon_16_0; _ <<- HLEVEL_colon_16_1; _ <<- STDVRS_colon_2_0; _ <<- SEGNUM_colon_9_0; _ <<- TEMP_IDTNR_colon_2_0; _ <<- MANDT_colon_32_0; _ <<- CREDAT_colon_2_0; _ <<- LAISO_0; _ <<- TEMP_IDTNR_0; _ <<- POSEX_0; _ <<- HLEVEL_colon_9_0; _ <<- TEST_colon_2_0; _ <<- ANETW_0; _ <<- STD_colon_2_0; _ <<- FKART_RL_0; _ <<- WMENG_0; _ <<- PSTYP_0; _ <<- SERIAL_colon_2_0; _ <<- HLEVEL_colon_10_0; _ <<- DOCUM_colon_11_0; _ <<- TEMP_ORT02_0; _ <<- SEGNUM_colon_17_0; _ <<- EMPST_0; _ <<- ABFTZ_0; _ <<- PSTLZ_0; _ <<- PSGNUM_colon_15_0; _ <<- ANRED_colon_3_0; _ <<- MANDT_colon_28_0; _ <<- MENEE_0; _ <<- MESFCT_colon_2_0; _ <<- DATUM_colon_4_0; _ <<- DOCUM_colon_15_0; _ <<- TOS_SUPPLY_QUAN_0; _ <<- LAND1_0; _ <<- VSART_BEZ_0; _ <<- DOCUM_colon_55_0; _ <<- SUMME_colon_2_0; _ <<- KNREF_0; _ <<- IHREZ_colon_3_0; _ <<- LKOND_0; _ <<- PEINH_0; _ <<- QUALF_colon_2_0; _ <<- QUALF_colon_2_1; _ <<- DOCREL_colon_2_0; _ <<- RCVPFC_colon_2_0; _ <<- PRZNT_0; _ <<- BRGEW_0; _ <<- MANDT_colon_27_0; _ <<- ARCKEY_colon_2_0; _ <<- COUNC_colon_3_0; _ <<- LIFSK_0; _ <<- STRS2_colon_3_0; _ <<- PSTL2_colon_3_0; _ <<- RCVPRN_colon_2_0; _ <<- SNDSAD_colon_2_0; _ <<- IDOCTYP_0; _ <<- POSNR_0; _ <<- TELFX_colon_4_0; _ <<- HLEVEL_colon_56_0; _ <<- ORGTX_colon_2_0; _ <<- PSGNUM_colon_11_0) {
+                return!(*AMap)
+              }
+            }
+          } |
+          contract AMap(return, @"get", @prefix, @field) = {
+            for(@s <<- state; @b <<- branches) {
+              let @fieldIdxs <- b.get(prefix).get(field);
+                @firstIdx <- fieldIdxs.nth(0);
+                @fields <- s.get(field);
+                chan <- fields.nth(firstIdx) in {
+                 for(@res <<- chan) {return!(res)}
+              }
+            }
+          } |
+          contract AMap(return, @"update", @prefix, @field, @value) = {
+            for(@s <<- state; @b <<- branches) {
+              let @fieldIdxs <- b.get(prefix).get(field);
+                @fields <- s.get(field) in {
+                new loop in {
+                  contract loop(@idxs) = {
+                    match idxs {
+                      [head ...tail] => {
+                        let chan <- fields.nth(head) in {
+                          for(_ <- chan) {
+                            chan!(value) | 
+                            for( _ <<- chan ) {loop!(tail)}
+                          }
+                        }
+                      }
+                      _ => { return!(true) }
+                    }
+                  } |
+                  loop!(fieldIdxs)
+                } 
+              }
+            }
+          }
         }
       }
-    }  
+    }
   }
 }

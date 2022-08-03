@@ -74,7 +74,6 @@ object MkRecordContract extends IOApp {
       r <- extendedRules(mapRules)
       _ = println((r._1))
       _ = println((r._2))
-      _ = println((r._3))
     } yield ExitCode.Success
   }
 }

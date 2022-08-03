@@ -6,18 +6,17 @@ import scala.collection.convert.ImplicitConversions.`collection AsScalaIterable`
 
 object Compiler {
 
-  def createRhoFromAST(term: ProgramType): (String, String, String) =
+  def createRhoFromAST(term: ProgramType): (String, String) =
     term match {
       case prog: Program =>
-        val localDecl = createDecls(prog.declarationlist_)
-        val localInit = createInit(prog.stmlist_)
-        val blocks    = createProcessRecordContract(prog.blocklist_)
-        (localDecl, localInit, blocks)
+        val lMapContract          = createLMapContract(prog.declarationlist_, prog.stmlist_)
+        val processRecordContract = createProcessRecordContract(prog.blocklist_)
+        (lMapContract, processRecordContract)
     }
 
   val ident = "  "
 
-  def createDecls(declList: DeclarationList): String = {
+  def createLMapContract(declList: DeclarationList, stmList: StmList): String = {
     def procDecl(decl: Declaration): String =
       decl match {
         case x: DeclString   => procIdent(x.identliteral_)
@@ -30,101 +29,94 @@ object Compiler {
           )
           ""
       }
+
     val decls = declList match {
       case x: Declarations => x.listdeclaration_.toList
     }
-    val strDecls   = decls.map(x => procDecl(x))
+    val strDecls   = decls.map(procDecl)
     val strNewDecl = if (strDecls.nonEmpty) strDecls.mkString(", ") else "temp"
     val strStateDecl =
       if (strDecls.nonEmpty) strDecls.map(x => s""""$x":*$x""").mkString(", ") else "Nil"
-    val strFirstInit     = strDecls.map(x => s"""$x!(Nil) | """).mkString("")
-    val strWaitFirstInit = strDecls.map(x => s"""; _ <<- $x""").mkString("")
-    s"""new LMap, state in {
-       #  contract LMap(return, @"decl") = {
-       #    new $strNewDecl in {
-       #      state!({$strStateDecl}) |
-       #      $strFirstInit
-       #      for(_ <<- state$strWaitFirstInit) {
-       #        return!(true)
-       #      }
+    val strSending = strDecls.map(x => s"""$x!(Nil) | """).mkString("")
+    val strWaiting = strDecls.map(x => s"""; _ <<- $x""").mkString("")
+    val strInits   = procStatements(stmList, 1, 0)
+
+    s"""contract LMap(return, @"init") = {
+       #  new $strNewDecl in {
+       #    state!({$strStateDecl}) |
+       #    $strSending
+       #    for(_ <<- state$strWaiting) {
+       #      for(_ <- initLocal!?(*LMap)) {
+       #        return!(*LMap)
+       #      }  
        #    }
-       #  } |
-       #  contract LMap(return, @"get", @field) = {
-       #    for(@s <<- state) {
-       #      let chan <- s.get(field) in {
-       #        for(x <<- chan) {return!(*x)}
-       #      }
-       #    }    
-       #  } |
-       #  contract LMap(return, @"update", @field, @value) = {
-       #    for(@s <<- state) {
-       #      let chan <- s.get(field) in {
-       #        for(_ <- chan) {chan!(value) | for(_ <<- chan) {return!(true)}}
-       #      }
+       #  }
+       #} |
+       #contract initLocal(ret0, l) = {
+       #$strInits
+       #} |
+       #contract LMap(return, @"get", @field) = {
+       #  for(@s <<- state) {
+       #    let chan <- s.get(field) in {
+       #      for(x <<- chan) {return!(*x)}
+       #    }
+       #  }    
+       #} |
+       #contract LMap(return, @"update", @field, @value) = {
+       #  for(@s <<- state) {
+       #    let chan <- s.get(field) in {
+       #      for(_ <- chan) {chan!(value) | for(_ <<- chan) {return!(true)}}
        #    }
        #  }
        #}""".stripMargin('#')
   }
 
-  def createInit(stmList: StmList): String = {
-    val strBody = procStatements(stmList, 1, 0)
-    s"""contract localInit(ret0, l) = {
-       #$strBody
-       #}""".stripMargin('#')
-  }
-
   def createProcessRecordContract(blockList: BlockList): String = {
-    def id(level: Int)          = ident * level
-    val strProcessFieldContract = createProcessFieldContract(blockList, 2)
-    s"""${id(0)}contract processRecord(return, s, l, @(recKey, recValues)) = {
-       #${id(1)}new processField, saveRecordDataLoop, processFieldLoop in {    
-       #$strProcessFieldContract |
-       #${id(2)}contract processFieldLoop(@keys) = {
-       #${id(3)}match keys {
-       #${id(4)}Set(head... tail) => {
-       #${id(5)}for(_ <- processField!?(head)) { processFieldLoop!(tail) }
-       #${id(4)}}
-       #${id(4)}_ => { return!(true) }
-       #${id(3)}}
-       #${id(2)}} |
-       #${id(2)}contract saveRecordDataLoop(@KVs) = {
-       #${id(3)}match KVs {
-       #${id(4)}[head... tail] => {
-       #${id(5)}for(_ <- s!?("update", recKey, head.nth(0), head.nth(1))) {
-       #${id(6)}saveRecordDataLoop!(tail)
-       #${id(5)}}
-       #${id(4)}}
-       #${id(4)}_ => { processFieldLoop!(recValues.keys()) }
-       #${id(3)}}
-       #${id(2)}} |
-       #${id(2)}saveRecordDataLoop!(recValues.toList())
-       #${id(1)}}
-       #${id(0)}}""".stripMargin('#')
-  }
-
-  def createProcessFieldContract(blockList: BlockList, identLevel: Int): String = {
-    def id(addLevel: Int) = ident * (identLevel + addLevel)
-    def createCase(name: String): String =
-      s"""${id(3)}"$name" => { for(@res <- $name!?()) { ret!(res) } }"""
-
     val blocks = blockList match {
       case x: Blocks => x.listblock_.toList
     }
-    val strBlocks       = blocks.map(x => createBlock(x, identLevel + 2))
-    val strBlockSection = strBlocks.mkString(" |\n")
     val names           = blocks.map(getBlockName)
     val strNewNames     = names.mkString(", ")
-    val strCases        = names.map(createCase).mkString("\n")
+    val strBlocks       = blocks.map(x => createBlock(x, 4))
+    val strBlockSection = strBlocks.mkString(" |\n")
+    val strCases = names
+      .map { name =>
+        s"""          "$name" => { for(@res <- $name!?()) { ret!(res) } }"""
+      }
+      .mkString("\n")
 
-    s"""${id(0)}contract processField(ret, @fieldName) = {
-        #${id(1)}new $strNewNames in {
-        #$strBlockSection |
-        #${id(2)}match fieldName {
-        #$strCases
-        #${id(3)}_ => ret!(true)
-        #${id(2)}}
-        #${id(1)}}
-        #${id(0)}}""".stripMargin('#')
+    s"""contract processRecord(@(recKey, recValues),  @(*l, *s), return) = {
+       #  new processField, saveRecordDataLoop, processFieldLoop in {
+       #    contract processField(ret, @fieldName) = {
+       #      new $strNewNames in {
+       #$strBlockSection |
+       #        match fieldName {
+       #$strCases
+       #          _ => ret!(true)
+       #        }
+       #      }
+       #    } |
+       #    contract processFieldLoop(@keys) = {
+       #      match keys {
+       #        Set(head... tail) => {
+       #          for(_ <- processField!?(head)) { processFieldLoop!(tail) }
+       #        }
+       #        _ => { return!(true) }
+       #      }
+       #    } |
+       #    contract saveRecordDataLoop(@KVs) = {
+       #      match KVs {
+       #        [head... tail] => {
+       #          for(_ <- s!?("update", recKey, head.nth(0), head.nth(1))) {
+       #            saveRecordDataLoop!(tail)
+       #          }
+       #        }
+       #        _ => { processFieldLoop!(recValues.keys()) }
+       #      }
+       #    } |
+       #    saveRecordDataLoop!(recValues.toList())
+       #  }
+       #}""".stripMargin('#')
   }
 
   def getBlockName(block: Block): String =
