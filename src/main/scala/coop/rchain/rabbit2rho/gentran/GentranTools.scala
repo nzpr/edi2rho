@@ -212,6 +212,11 @@ object GentranTools {
          #      } 
          #    }
          #  }
+         #} |
+         #contract AMap(return, @"getAll") = {
+         #  for(@s <<- state; @b <<- branches) {
+         #    return!((s, b))
+         #  }
          #}""".stripMargin('#')
     }
   }
@@ -276,20 +281,20 @@ object GentranTools {
     #          // wait for all inputs to be filled
     #          for(@v1 <= i1 & @v2 <= i2) {
     #            new resultCh in {
-    #              for (result <- resultCh) {
+    #              for (@(_, aMap) <- resultCh) {
     #                // increase nonce, put result on a tuple name with new nonce
     #                new nonceUpdatedCh, newValueCh in {
     #                  Nonce!("add", 1, *nonceUpdatedCh)
     #                | for(_ <- nonceUpdatedCh) {
     #                    Nonce!("value", *newValueCh)
     #                  | for (@newNonce <- newValueCh) {
-    #                      @(*o, newNonce)!(*result)
+    #                      @(*o, newNonce)!(aMap)
     #                    | resultsTotal!(newNonce)
     #                    | out!("Result ${newNonce} is persisted." %% {"newNonce":newNonce})
     #                    }
     #                  } 
     #                }   
-    #              | out!("Result is: ${result}" %% {"result": *result})                                
+    #              | for(@res <- @aMap!?("getAll")) { out!(("(state, branches) = ", res)) }
     #              } 
     #            | for(@stateInit<-initState!?()) {
     #                doMapping!(*resultCh, v1.slice(1,50), *processRecord, stateInit)

@@ -58,7 +58,7 @@ object IdocTools {
       id2Tag: String => String
   ): List[String] =
     parseIdoc(idoc, schema, id2Tag).compile.toList
-      .map { case (k, v) => Map(k -> v) }
+      .map { case (k, v) => (k, v) }
       .map(json.writeValueAsString)
 
   def idoc2RhoMap(

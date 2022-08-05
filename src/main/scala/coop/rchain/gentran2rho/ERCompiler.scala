@@ -101,7 +101,7 @@ object Compiler {
        #        Set(head... tail) => {
        #          for(_ <- processField!?(head)) { processFieldLoop!(tail) }
        #        }
-       #        _ => { return!(true) }
+       #        _ => { return!((*l, *s)) }
        #      }
        #    } |
        #    contract saveRecordDataLoop(@KVs) = {
