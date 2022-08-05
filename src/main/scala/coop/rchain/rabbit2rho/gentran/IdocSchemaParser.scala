@@ -25,7 +25,7 @@ object ParseInput extends IOApp {
                  .map(idoc2RhoList(_, schema._2, schema._1))
                  .compile
                  .toList
-      _ = println(parsed.head)
+      _ = println(s"[${parsed.head.mkString(", ")}]")
     } yield ExitCode.Success
   }
 }
