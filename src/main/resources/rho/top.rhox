@@ -1,0 +1,42 @@
+let
+  @contractId <- "$$CONTRACT_ID$$"
+in { 
+  new
+    deployerId(`rho:rchain:deployerId`), deployId(`rho:rchain:deployId`),
+    rl(`rho:registry:lookup`), out(`rho:io:stdout`),
+    doMapping, i1, i2, o, tags, resultsTotal
+  in {  
+     @(*deployerId, contractId)!(((*i1,*i2), *o, *tags, *resultsTotal)) // publish channels (to not use registry)
+  | new NonNegativeNumber, Nonce, NNNCh, NonceCh in {
+      rl!(`rho:lang:nonNegativeNumber`, *NNNCh)
+    | for (@(_, NonNegativeNumber) <- NNNCh) {
+        @NonNegativeNumber!(0, *NonceCh)// nonce contract initialized with zero
+      | for (Nonce <- NonceCh) {
+          // wait for all inputs to be filled
+          for(@data <= i1) {
+            new resultCh in {
+              for (result <- resultCh) {
+                // increase nonce, put result on a tuple name with new nonce
+                new nonceUpdatedCh, newValueCh in {
+                  Nonce!("add", 1, *nonceUpdatedCh)
+                | for(_ <- nonceUpdatedCh) {
+                    Nonce!("value", *newValueCh)
+                  | for (@newNonce <- newValueCh) {
+                      @(*o, newNonce)!(*result)
+                    | resultsTotal!(newNonce)
+                    | out!("Result ${newNonce} is persisted." %% {"newNonce":newNonce})
+                    }
+                  } 
+                }   
+              | out!("Result is: ${result}" %% {"result": *result})                                
+              }
+            | doMapping!(data, *resultCh)
+            | out!("Received job of ${nRec} records." %% {"nRec": data.length()})
+            }
+          }
+        | out!("Contract ${contractId} is installed." %% {"contractId": contractId}) 
+        }
+      }     
+    } |$$doMapping$$
+  }
+}

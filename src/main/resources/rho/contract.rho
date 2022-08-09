@@ -7,12 +7,12 @@ in {
   new
     deployerId(`rho:rchain:deployerId`), deployId(`rho:rchain:deployId`),
     rl(`rho:registry:lookup`), out(`rho:io:stdout`),
-    doMapping, i1, i2, o, tags, resultsTotal,
+    doMapping, i, o, tags, resultsTotal,
     initState, 
     processRecord
   in {
     // publish channels (to not use registry)
-    @(*deployerId, contractId)!(((*i1, *i2), *o, *tags, *resultsTotal))
+    @(*deployerId, contractId)!((*i, *o, *tags, *resultsTotal))
   | tags!(inputTags)
   | new NonNegativeNumber, Nonce, NNNCh, NonceCh in {
       rl!(`rho:lang:nonNegativeNumber`, *NNNCh)
@@ -20,7 +20,7 @@ in {
         @NonNegativeNumber!(0, *NonceCh)// nonce contract initialized with zero
       | for (Nonce <- NonceCh) {
           // wait for all inputs to be filled
-          for(@v1 <= i1 & @v2 <= i2) {
+          for (@v1 <= i) {
             new resultCh in {
               for (@(_, aMap) <- resultCh) {
                 // increase nonce, put result on a tuple name with new nonce
@@ -35,9 +35,9 @@ in {
                     }
                   } 
                 }   
-              | for(@res <- @aMap!?("getAll")) { out!(("(state, branches) = ", res)) }
+              | for (@res <- @aMap!?("getAll")) { out!(("(state, branches) = ", res)) }
               } 
-            | for(@stateInit<-initState!?()) {
+            | for (@stateInit<-initState!?()) {
                 doMapping!(*resultCh, v1.slice(1,50), *processRecord, stateInit)
               }
             }

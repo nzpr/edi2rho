@@ -24,6 +24,7 @@ case class AppConf(
 case class RabbitConfig(
     host: String,
     port: Int,
+    rabbitInputTopic: String,
     rabbitOutputTopic: String,
     exchangeName: String
 )
@@ -51,7 +52,7 @@ object AppConf {
       else conf.inputIdocPath
     val mContract =
       if (conf.mainContractPath.isBlank)
-        new File("src/main/resources/rho/contract.rho").getAbsolutePath
+        new File("src/main/resources/rho/top.rhox").getAbsolutePath
       else conf.mainContractPath
     val pContract =
       if (conf.produceContractPath.isBlank)
