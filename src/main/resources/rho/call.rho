@@ -2,7 +2,7 @@
 // nameIdx - index of input port
 // data - data to send (parsed IDOC as list of maps)
 let
-  @nameIdx <- "$$NAME_IDX$$";
+  @nameIdx <- 1;
   @data <- "$$DATA$$"
 in {
   new deployerId(`rho:rchain:deployerId`) in {

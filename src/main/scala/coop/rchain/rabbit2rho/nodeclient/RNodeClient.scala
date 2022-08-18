@@ -12,6 +12,8 @@ import fs2.Stream
 import io.grpc.Metadata
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder
 
+import scala.concurrent.duration.DurationInt
+
 final case class RNodeClient[F[_]: Sync](
     client: DeployServiceFs2Grpc[F, Metadata],
     nodeConfig: NodeConfig
@@ -81,9 +83,33 @@ object RNodeClient {
     val builder = NettyChannelBuilder
       .forAddress(nodeConfig.host, nodeConfig.port)
       .negotiationType(io.grpc.netty.shaded.io.grpc.netty.NegotiationType.PLAINTEXT)
+
+    def waitForNode(c: DeployServiceFs2Grpc[F, Metadata]): F[Unit] = {
+      val pingStream = fs2.Stream
+        .awakeEvery(1.second)
+        .evalMap { _ =>
+          c.getBlocks(BlocksQuery(1), ctx = new Metadata)
+            .compile
+            .lastOrError
+            .map(_ => ().some)
+            .handleError(_ => none[Unit])
+        }
+
+      pingStream
+        .take(300) // 5 min to start the node
+        .unNone
+        .head
+        .compile
+        .last
+        .map(_.liftTo(new Exception(s"Unable to establish connection to RNode")))
+    }
+
     for {
       channel <- Resource.liftK(builder.build().pure[F])
       stub    <- DeployServiceFs2Grpc.stubResource(channel)
+      _       = println(s"Waiting for RNode on localhost...")
+      _       <- Resource.liftK(waitForNode(stub))
+      _       = println(s"Connection to RNode established.")
     } yield RNodeClient(stub, nodeConfig)
   }
 

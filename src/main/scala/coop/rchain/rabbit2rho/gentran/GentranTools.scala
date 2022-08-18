@@ -1,7 +1,9 @@
 package coop.rchain.rabbit2rho.gentran
 
-import cats.effect.Ref
+import cats.Applicative
+import cats.effect.{Ref, Sync}
 import cats.effect.kernel.Concurrent
+import cats.effect.kernel.Ref.Make
 import cats.syntax.all._
 import coop.rchain.gentran2rho.Compiler.createRhoFromAST
 import coop.rchain.gentran2rho.ERParser.sourceToAST
@@ -20,7 +22,7 @@ object GentranTools {
     * Read branching from Gentran mapping rules file.
     * Outputs a list of branches to feed [[AMap.init()]]
     */
-  def readBranching[F[_]: Files: Concurrent](
+  def readBranching[F[_]: Files: Sync: Make](
       path: Path
   ): F[List[(Option[String], String)]] = {
     def leadingSpaces(s: String): Int = {
@@ -66,7 +68,7 @@ object GentranTools {
     *   1. Map from record ID (used in extended rules) to record Tag (used in input documents).
     *   2. Map record ID -> schema for reading values
     */
-  def readRecordsSchema[F[_]: Files: Concurrent](
+  def readRecordsSchema[F[_]: Files: Make: Sync](
       path: Path
   ): F[(Map[String, String], Map[String, Map[String, Element]])] =
     Stream
@@ -118,7 +120,7 @@ object GentranTools {
       .compile
       .lastOrError
 
-  def aMap[F[_]: Files: Concurrent](
+  def aMap[F[_]: Files: Sync: Make](
       mappingRulesPath: Path
   ): F[String] = {
     def aMapInit(
@@ -221,7 +223,7 @@ object GentranTools {
     }
   }
 
-  def extendedRules[F[_]: Files: Concurrent](
+  def extendedRules[F[_]: Files: Sync](
       mappingRulesPath: Path
   ): F[(String, String)] =
     Files[F]
@@ -314,7 +316,7 @@ object GentranTools {
     #      }
     #    } |""".stripMargin('#')
 
-  def contract[F[_]: Files: Concurrent](
+  def contract[F[_]: Files: Sync: Make](
       mappingRulesPath: Path
   ): F[String] =
     for {
@@ -327,4 +329,14 @@ object GentranTools {
          #${addPadding(initState, 2)}
          #  }
          #}""".stripMargin('#')
+
+  private def noOpMapping[F[_]: Applicative] =
+    """
+      |contract doMapping(@data, result) = {
+      |  result!("Rholang implementation for Gentran extended rules is WIP. For now here is the number of records in a job received: ${d}" %% {"d": data.length()})
+      |}
+      |""".stripMargin.pure
+
+  def mkMappingContract[F[_]: Applicative](mappingRulesPath: Path) =
+    noOpMapping.map(addPadding(_, 2)) // TODO replace with real mapping contract
 }

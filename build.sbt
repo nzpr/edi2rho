@@ -9,20 +9,16 @@ lazy val projectSettings = Seq(
   organization := "coop.rchain",
   scalaVersion := "2.12.15",
   version := "0.1.0-SNAPSHOT",
-  resolvers ++= Seq(
-    Resolver.sonatypeRepo("releases"),
-    Resolver.sonatypeRepo("snapshots"),
-    "jitpack" at "https://jitpack.io"
-  ),
-  testOptions in Test += Tests.Argument("-oD"), //output test durations
+  resolvers ++=
+    (Resolver.mavenLocal +: Resolver.sonatypeOssRepos("releases")) ++
+      Resolver.sonatypeOssRepos("snapshots") :+
+      ("jitpack" at "https://jitpack.io"),
+  Test / testOptions += Tests.Argument("-oD"), //output test durations
   javacOptions ++= Seq("-source", "11", "-target", "11"),
   Test / fork := true,
   Test / parallelExecution := false,
   Test / testForkedParallel := false,
-  IntegrationTest / fork := true,
-  IntegrationTest / parallelExecution := false,
-  IntegrationTest / testForkedParallel := false,
-  assemblyMergeStrategy in assembly := {
+  assembly / assemblyMergeStrategy := {
     // For some reason, all artifacts from 'io.netty' group contain this file with different contents.
     // Discarding it as it's not needed.
     case path if path.endsWith("io.netty.versions.properties") => MergeStrategy.discard
@@ -35,9 +31,8 @@ lazy val projectSettings = Seq(
   // skip api doc generation if SKIP_DOC env variable is defined
   Seq(sys.env.get("SKIP_DOC")).flatMap { _ =>
     Seq(
-      publishArtifact in (Compile, packageDoc) := false,
-      publishArtifact in packageDoc := false,
-      sources in (Compile, doc) := Seq.empty
+      Compile / packageDoc / publishArtifact := false,
+      Compile / doc / sources := Seq.empty
     )
   }
 
@@ -56,9 +51,8 @@ lazy val edi2rho = (project in file("."))
       "-Xfatal-warnings",
       "-Xlint:_,-missing-interpolator" // disable "possible missing interpolator" warning
     ),
-    publishArtifact in (Compile, packageDoc) := false,
-    publishArtifact in packageDoc := false,
-    sources in (Compile, doc) := Seq.empty,
+    Compile / packageDoc / publishArtifact := false,
+    Compile / doc / sources := Seq.empty,
     libraryDependencies ++= deps,
     scalapbCodeGeneratorOptions += CodeGeneratorOption.FlatPackage,
     scalacOptions ++= Seq(
@@ -84,8 +78,8 @@ lazy val edi2rho = (project in file("."))
       "-Ywarn-unused:patvars",
       "-Ywarn-unused:privates"
     ),
-    javaOptions in Test ++= Seq("-Xss240k", "-XX:MaxJavaStackTraceDepth=10000", "-Xmx128m"),
-    assemblyMergeStrategy in assembly := {
+    Test / javaOptions ++= Seq("-Xss240k", "-XX:MaxJavaStackTraceDepth=10000", "-Xmx128m"),
+    assembly / assemblyMergeStrategy := {
       // For some reason, all artifacts from 'io.netty' group contain this file with different contents.
       // Discarding it as it's not needed.
       case path if path.endsWith("io.netty.versions.properties") => MergeStrategy.discard
@@ -97,5 +91,5 @@ lazy val edi2rho = (project in file("."))
       case path => MergeStrategy.defaultMergeStrategy(path)
     },
     assembly / mainClass := Some("coop.rchain.rabbit2rho.App"),
-    assemblyJarName in assembly := "r2r-smiths.jar"
+    assembly / assemblyJarName := "rabbit2rho.jar"
   )

@@ -98,7 +98,7 @@ object ContractDeployed {
           .awakeEvery(1.second)
           .evalMap(_ => checkResultName[F](rnode.pk, contractName, rnode))
           .evalTap(r => shouldDeployRef.set(true).unlessA(r.nonEmpty))
-          // wait for 100 seconds or declare failure
+          // wait for 30 seconds or declare failure
           .take(30)
           .unNone
           .head

@@ -11,7 +11,7 @@ import dev.profunktor.fs2rabbit.config.declaration._
 import dev.profunktor.fs2rabbit.interpreter.RabbitClient
 import dev.profunktor.fs2rabbit.model.AckResult.Ack
 import dev.profunktor.fs2rabbit.model.ExchangeType.Topic
-import dev.profunktor.fs2rabbit.model.{AmqpEnvelope, QueueName, RoutingKey}
+import dev.profunktor.fs2rabbit.model.{AMQPChannel, AmqpEnvelope, QueueName, RoutingKey}
 import fs2.Stream
 
 import scala.concurrent.duration.DurationInt
@@ -50,6 +50,26 @@ object Funnel {
 
     hydrationStream concurrently harvestStream
   }
+  def waitForRabbit[F[_]: Temporal](rabbit: RabbitClient[F]): F[Resource[F, AMQPChannel]] = {
+    println("Waiting for RabbitMQ on localhost...")
+    fs2.Stream
+      .awakeEvery(1.second)
+      .covary[F]
+      .evalMap { _ =>
+        rabbit.createConnectionChannel
+          .use(_ => (rabbit, ().some).pure)
+          .handleError(_ => (rabbit, none[Unit]))
+      }
+      .take(300) // 5 min to start rabbit server
+      .collect { case (c, Some(_)) => c }
+      .map(_.createConnectionChannel)
+      .head
+      .compile
+      .last
+      .flatMap(
+        _.liftTo(new Exception(s"Unable to establish connection to RabbitMQ"))
+      )
+  }
 
   def apply[F[_]: Temporal: Async, I, R](
       rnode: RNodeClient[F],
@@ -61,7 +81,8 @@ object Funnel {
   ): Stream[F, Unit] = {
     val resources = for {
       rabbit     <- RabbitClient.default(fs2RabbitConfig).resource
-      connection <- rabbit.createConnectionChannel
+      x          <- Resource.liftK(waitForRabbit(rabbit))
+      connection <- x
       _          <- Resource.liftK(rabbit.declareExchange(exchangeName, Topic)(connection))
       initRabbit = {
         implicit val c = connection
@@ -97,7 +118,10 @@ object Funnel {
       }
       rabbitPorts <- Resource.liftK(initRabbit)
     } yield {
-      println(s"Rabbit ports initialized.\n")
+      println(s"""Connected to RabbitMQ on localhost.
+           |Listening for data on topics: ${contract.codec.input.keySet}.
+           |Publishing results to topic: ${appConf.rabbitConfig.rabbitOutputTopic}
+           |""".stripMargin)
       val ((toAckRef, rabbitIn), rabbitOut) = rabbitPorts
       def deploy(s: String) =
         rnode.deploy(s).void
