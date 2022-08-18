@@ -17,8 +17,8 @@ import scala.io.{BufferedSource, Source}
 
 object Simple {
   private val arity           = 1
-  private val contractName    = "smiths-alpha"
-  private val contractVersion = "0.0.8"
+  private val contractName    = "assoc-news"
+  private val contractVersion = "0.0.1"
   private val contractId      = s"$contractName-v$contractVersion"
   private val inputNames      = (1 to arity).map(i => s"i$i").toList
   // these are tags for incoming data

@@ -97,7 +97,11 @@ object Funnel {
       }
       rabbitPorts <- Resource.liftK(initRabbit)
     } yield {
-      println(s"Rabbit ports initialized.\n")
+      println(
+        s"""Connected to RabbitMQ on localhost.
+           |Listening for data on topics: ${contract.codec.input.keySet}.
+           |Publishing results to topic: ${appConf.rabbitConfig.rabbitOutputTopic}
+           |""".stripMargin)
       val ((toAckRef, rabbitIn), rabbitOut) = rabbitPorts
       def deploy(s: String) =
         rnode.deploy(s).void

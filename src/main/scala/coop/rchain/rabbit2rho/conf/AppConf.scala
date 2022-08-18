@@ -24,7 +24,6 @@ case class AppConf(
 case class RabbitConfig(
     host: String,
     port: Int,
-    rabbitInputTopic: String,
     rabbitOutputTopic: String,
     exchangeName: String
 )
