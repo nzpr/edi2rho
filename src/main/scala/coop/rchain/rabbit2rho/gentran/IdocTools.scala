@@ -58,8 +58,12 @@ object IdocTools {
       id2Tag: String => String
   ): List[String] =
     parseIdoc(idoc, schema, id2Tag).compile.toList
-      .map { case (k, v) => (k, v) }
-      .map(json.writeValueAsString)
+      .map {
+        case (recName, fields) =>
+          val strFields = fields.toList.map { case (k, v) => s""""${rhoName(k)}":"$v"""" }
+          s"""("${rhoName(recName)}",{${strFields.mkString(", ")}})"""
+      }
+  def rhoName(name: String): String = name.replace(":", "_colon_")
 
   def idoc2RhoMap(
       idoc: String,
